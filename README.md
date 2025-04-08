@@ -1,22 +1,22 @@
 # SLAB Aquarium LED Controller
 
-A control application for IoT-based aquarium lighting systems. SLAB (Smart LED Aquarium Ballast) allows you to easily control your aquarium lighting from your mobile device.
+A Flutter application for controlling IoT-based aquarium lighting systems. SLAB (Smart LED Aquarium Ballast) allows users to manage aquarium lighting profiles and schedules from their mobile devices.
 
 ## Features
 
-- **Detailed LED Control**: Adjust intensity of 7 different LED channels (Royal Blue, Blue, UV, Violet, Red, Green, White)
-- **Time Profiles**: Set different lighting for morning, midday, evening, and night
-- **Automatic Schedule**: Lighting changes automatically according to time of day
-- **Manual Mode**: Direct control of each LED channel as needed
-- **Time Synchronization**: Set RTC clock on controller for accurate scheduling
-- **Connection Monitoring**: Real-time connection status information
-- **Diagnostics**: Tools for diagnosing controller connection issues
+- Detailed LED control for 7 channels (Royal Blue, Blue, UV, Violet, Red, Green, White)
+- Time-based profiles (morning, midday, evening, night)
+- Automatic scheduling with smooth transitions
+- Manual mode for direct control
+- Real-time connection monitoring
+- Diagnostic tools and status information
 
 ## System Requirements
 
-- Flutter 3.0 or higher
-- Android 6.0+ or iOS 12.0+
-- SLAB controller connected to the same Wi-Fi network
+- Flutter 3.0.0 or higher
+- Android 5.0+ or iOS 12.0+
+- WiFi connectivity
+- Compatible with SLAB IoT Controller ([GitHub Repository](https://github.com/albifhrzq/SLABIoTController))
 
 ## Getting Started
 
