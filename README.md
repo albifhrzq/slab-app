@@ -54,7 +54,7 @@ lib/
 
 1. Clone the repository
 ```bash
-git clone https://github.com/username/slab-app.git
+git clone https://github.com/albifhrzq/slab-app.git
 cd slab-app
 ```
 
