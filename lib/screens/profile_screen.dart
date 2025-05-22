@@ -31,9 +31,11 @@ class _ProfileScreenState extends State<ProfileScreen>
   final Map<String, Profile> _profiles = {};
   final Map<String, List<LightSchedulePoint>> _hourlySchedules = {};
   bool _isPreviewing = false;
+  bool _isFullCyclePreview = false; // Tambahan untuk mode preview full cycle
   Timer? _previewTimer;
   int _previewStep = 0;
   final int _previewSteps = 30; // 30 detik untuk preview
+  final int _fullCyclePreviewSteps = 30; // 120 detik untuk preview full cycle
   bool _isPaused = false;
   String _selectedColor = 'royalBlue'; // Warna yang dipilih untuk diedit
   final List<String> _colorOptions = [
@@ -214,6 +216,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     // Reset state
     setState(() {
       _isPreviewing = true;
+      _isFullCyclePreview = false;
       _previewStep = 0;
       _isPaused = false;
     });
@@ -240,6 +243,69 @@ class _ProfileScreenState extends State<ProfileScreen>
 
       // Dapatkan profil untuk tahap preview ini
       final previewProfile = _getPreviewProfile();
+
+      // Format data dengan format yang konsisten
+      final Map<String, dynamic> ledValues = {
+        "royalBlue": previewProfile.royalBlue,
+        "blue": previewProfile.blue,
+        "uv": previewProfile.uv,
+        "violet": previewProfile.violet,
+        "red": previewProfile.red,
+        "green": previewProfile.green,
+        "white": previewProfile.white,
+      };
+
+      try {
+        // Kirim profil ke hardware dengan mode manual
+        await apiService.setManualMode(true);
+        await apiService.setManualLedValues(ledValues);
+
+        if (mounted) {
+          setState(() {
+            _previewStep++;
+          });
+        }
+      } catch (e) {
+        // Tampilkan error jika terjadi masalah komunikasi
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Preview error: ${e.toString()}')),
+        );
+        _stopPreview();
+      }
+    });
+  }
+
+  void _startFullCyclePreview() {
+    // Reset state
+    setState(() {
+      _isPreviewing = true;
+      _isFullCyclePreview = true;
+      _previewStep = 0;
+      _isPaused = false;
+    });
+
+    // Dapatkan akses ke apiService
+    final apiService = Provider.of<AquariumApiService>(context, listen: false);
+
+    // Notifikasi ke pengguna
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Full cycle preview started - LED intensity will change through all profiles',
+        ),
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    _previewTimer?.cancel();
+    _previewTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      if (_previewStep >= _fullCyclePreviewSteps) {
+        _stopPreview();
+        return;
+      }
+
+      // Dapatkan profil untuk tahap preview ini
+      final previewProfile = _getFullCyclePreviewProfile();
 
       // Format data dengan format yang konsisten
       final Map<String, dynamic> ledValues = {
@@ -301,6 +367,11 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   Profile _getPreviewProfile() {
+    // Jika dalam mode full cycle preview, gunakan fungsi khusus
+    if (_isFullCyclePreview) {
+      return _getFullCyclePreviewProfile();
+    }
+
     final currentType = _profileTypes[_tabController.index];
 
     // Jika dalam mode preview per jam (default)
@@ -360,6 +431,93 @@ class _ProfileScreenState extends State<ProfileScreen>
     }
     // Untuk preview yang dipause, gunakan nilai profil yang ada
     else {
+      return _profiles[currentType] ??
+          Profile(
+            royalBlue: 0,
+            blue: 0,
+            uv: 0,
+            violet: 0,
+            red: 0,
+            green: 0,
+            white: 0,
+          );
+    }
+  }
+
+  Profile _getFullCyclePreviewProfile() {
+    // Jika dalam mode preview per jam (default)
+    if (!_isPaused) {
+      // Hitung progress keseluruhan (0.0 hingga 1.0)
+      final progress = _previewStep / _fullCyclePreviewSteps;
+
+      // Tentukan profil awal dan akhir berdasarkan progress
+      final totalProfiles = _profileTypes.length;
+      final profileIndex = (progress * totalProfiles).floor();
+      final nextProfileIndex = (profileIndex + 1) % totalProfiles;
+
+      // Hitung progress dalam segmen profil saat ini
+      final segmentProgress = (progress * totalProfiles) - profileIndex;
+
+      final currentType = _profileTypes[profileIndex];
+      final nextType = _profileTypes[nextProfileIndex];
+
+      final currentProfile =
+          _profiles[currentType] ??
+          Profile(
+            royalBlue: 0,
+            blue: 0,
+            uv: 0,
+            violet: 0,
+            red: 0,
+            green: 0,
+            white: 0,
+          );
+
+      final nextProfile =
+          _profiles[nextType] ??
+          Profile(
+            royalBlue: 0,
+            blue: 0,
+            uv: 0,
+            violet: 0,
+            red: 0,
+            green: 0,
+            white: 0,
+          );
+
+      return Profile(
+        royalBlue: _interpolate(
+          currentProfile.royalBlue,
+          nextProfile.royalBlue,
+          segmentProgress,
+        ),
+        blue: _interpolate(
+          currentProfile.blue,
+          nextProfile.blue,
+          segmentProgress,
+        ),
+        uv: _interpolate(currentProfile.uv, nextProfile.uv, segmentProgress),
+        violet: _interpolate(
+          currentProfile.violet,
+          nextProfile.violet,
+          segmentProgress,
+        ),
+        red: _interpolate(currentProfile.red, nextProfile.red, segmentProgress),
+        green: _interpolate(
+          currentProfile.green,
+          nextProfile.green,
+          segmentProgress,
+        ),
+        white: _interpolate(
+          currentProfile.white,
+          nextProfile.white,
+          segmentProgress,
+        ),
+      );
+    }
+    // Untuk preview yang dipause, gunakan nilai profil saat ini
+    else {
+      final currentType = _profileTypes[_tabController.index];
       return _profiles[currentType] ??
           Profile(
             royalBlue: 0,
@@ -829,9 +987,11 @@ class _ProfileScreenState extends State<ProfileScreen>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text(
-                'Preview Mode (Live)',
-                style: TextStyle(
+              Text(
+                _isFullCyclePreview
+                    ? 'Full Cycle Preview Mode (Live)'
+                    : 'Preview Mode (Live)',
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
@@ -839,14 +999,20 @@ class _ProfileScreenState extends State<ProfileScreen>
               ),
               const SizedBox(height: 16),
               Text(
-                'Time: ${_previewStep}s / ${_previewSteps}s',
+                'Time: ${_previewStep}s / ${_isFullCyclePreview ? _fullCyclePreviewSteps : _previewSteps}s',
                 style: const TextStyle(color: Colors.white),
               ),
               const SizedBox(height: 8),
-              Text(
-                'Transition from $currentType to $nextType',
-                style: const TextStyle(color: Colors.white),
-              ),
+              if (_isFullCyclePreview)
+                Text(
+                  'Transition through all profiles: Morning → Midday → Evening → Night',
+                  style: const TextStyle(color: Colors.white),
+                )
+              else
+                Text(
+                  'Transition from $currentType to $nextType',
+                  style: const TextStyle(color: Colors.white),
+                ),
               const SizedBox(height: 16),
               // LED indicator display
               Container(
@@ -1249,6 +1415,13 @@ class _ProfileScreenState extends State<ProfileScreen>
                               icon: const Icon(Icons.play_arrow),
                               label: const Text('Preview Transition'),
                               onPressed: _startPreview,
+                            ),
+                            const SizedBox(height: 8),
+                            // Full Cycle Preview Button
+                            ElevatedButton.icon(
+                              icon: const Icon(Icons.repeat),
+                              label: const Text('Preview Full Cycle'),
+                              onPressed: _startFullCyclePreview,
                             ),
                             const SizedBox(height: 16),
 
