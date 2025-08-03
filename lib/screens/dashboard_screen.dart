@@ -588,43 +588,45 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       _buildLedSlider(
                         'Royal Blue',
                         'royalBlue',
-                        Colors.blue[900]!,
+                        const Color(0xFF002FA7), // Royal Blue yang lebih akurat
                         _currentProfile.royalBlue,
                       ),
                       _buildLedSlider(
                         'Blue',
                         'blue',
-                        Colors.blue,
+                        const Color(0xFF0047AB), // True Blue
                         _currentProfile.blue,
                       ),
                       _buildLedSlider(
                         'UV',
                         'uv',
-                        Colors.purple[900]!,
+                        const Color(0xFF8A2BE2), // UV purple yang lebih gelap
                         _currentProfile.uv,
                       ),
                       _buildLedSlider(
                         'Violet',
                         'violet',
-                        Colors.purple,
+                        const Color(0xFF9400D3), // Dark violet
                         _currentProfile.violet,
                       ),
                       _buildLedSlider(
                         'Red',
                         'red',
-                        Colors.red,
+                        const Color(0xFFFF0000), // True red
                         _currentProfile.red,
                       ),
                       _buildLedSlider(
                         'Green',
                         'green',
-                        Colors.green,
+                        const Color(0xFF00FF00), // True green
                         _currentProfile.green,
                       ),
                       _buildLedSlider(
                         'White',
                         'white',
-                        Colors.white,
+                        const Color(
+                          0xFFE8E8E8,
+                        ), // Warm white dengan border yang akan terlihat
                         _currentProfile.white,
                       ),
                     ],
@@ -884,35 +886,77 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   width: 24,
                   height: 24,
                   decoration: BoxDecoration(
-                    color: color.withOpacity(value / 255),
+                    color: color, // 100% warna tanpa opacity
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.grey),
+                    border: Border.all(
+                      color:
+                          color == const Color(0xFFE8E8E8)
+                              ? Colors.grey.withOpacity(
+                                0.6,
+                              ) // Border lebih gelap untuk white
+                              : Colors.grey.withOpacity(0.3),
+                      width: color == const Color(0xFFE8E8E8) ? 1.5 : 1.0,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: color.withOpacity(0.3),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Slider(
-                    value: value.toDouble(),
-                    min: 0,
-                    max: 255,
-                    divisions: 255,
-                    label: '$percentValue%',
-                    onChanged: (val) {
-                      setState(() {
-                        _currentProfile = _updateProfileValue(
-                          _currentProfile,
-                          key,
-                          val.toInt(),
-                        );
-                      });
-                    },
-                    onChangeEnd: (val) {
-                      _setLedValue(key, val.toInt());
-                    },
+                  child: SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      // Track yang aktif mengikuti warna LED
+                      activeTrackColor: color,
+                      // Track yang tidak aktif dengan opacity rendah
+                      inactiveTrackColor: color.withOpacity(0.2),
+                      // Thumb (handle) dengan warna LED
+                      thumbColor: color,
+                      // Overlay saat ditekan
+                      overlayColor: color.withOpacity(0.2),
+                      // Warna value indicator saat dikontrol
+                      valueIndicatorColor: color,
+                      valueIndicatorTextStyle: const TextStyle(
+                        color: Color.fromARGB(255, 0, 0, 0), // Ubah ke hitam
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    child: Slider(
+                      value: value.toDouble(),
+                      min: 0,
+                      max: 255,
+                      divisions: 255,
+                      label: '$percentValue%',
+                      onChanged: (val) {
+                        setState(() {
+                          _currentProfile = _updateProfileValue(
+                            _currentProfile,
+                            key,
+                            val.toInt(),
+                          );
+                        });
+                      },
+                      onChangeEnd: (val) {
+                        _setLedValue(key, val.toInt());
+                      },
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text('$percentValue%'),
+                SizedBox(
+                  width: 35,
+                  child: Text(
+                    '$percentValue%',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black, // Ubah ke hitam
+                    ),
+                  ),
+                ),
               ],
             ),
           ],
