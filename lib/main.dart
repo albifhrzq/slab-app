@@ -6,8 +6,11 @@ import 'services/profile_cache.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/profile_screen.dart';
+import 'config/app_config.dart';
 
 void main() {
+  // Print configuration saat aplikasi dimulai
+  AppConfig.printConfig();
   runApp(const MyApp());
 }
 
@@ -19,7 +22,7 @@ class MyApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         Provider<AquariumApiService>(
-          create: (_) => AquariumApiService(baseUrl: 'http://192.168.4.1'),
+          create: (_) => AquariumApiService(baseUrl: AppConfig.defaultBaseUrl),
           dispose: (_, service) => service.client.close(),
         ),
         ChangeNotifierProxyProvider<AquariumApiService, ConnectionManager>(

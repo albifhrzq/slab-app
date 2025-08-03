@@ -10,15 +10,18 @@ class ConnectionManager extends ChangeNotifier {
   Timer? _pingTimer;
   final AquariumApiService _apiService;
   int _retryCount = 0;
-  static const int maxRetries = 5;
+  static const int maxRetries = 3; // Kurangi dari 5 ke 3
   static const int retryIntervalSeconds = 10;
-  static const int pingIntervalSeconds = 15; // Lebih singkat: 15 detik
-  static const int gracePeriodSeconds = 8; // Grace period lebih lama: 8 detik
+  static const int pingIntervalSeconds = 30; // Lebih jarang: 30 detik
+  static const int gracePeriodSeconds =
+      5; // Grace period lebih singkat: 5 detik
   static const int connectionTimeoutSeconds = 3; // Timeout untuk koneksi API
+  static const int initialConnectMaxRetries = 3; // Khusus untuk initial connect
 
   // Status koneksi
   String _connectionStatus = 'Disconnected';
   DateTime? _lastSuccessfulConnection;
+  bool _isInitialConnection = true; // Flag untuk initial connection
 
   // Statistik koneksi
   int _totalPingAttempts = 0;
@@ -28,9 +31,66 @@ class ConnectionManager extends ChangeNotifier {
   DateTime? _firstPingAttempt;
 
   ConnectionManager(this._apiService) {
-    // Mulai ping periodik untuk keep-alive
-    _startPingTimer();
+    // Jangan langsung mulai ping timer saat inisialisasi
+    // Biarkan user memulai koneksi manual
     _firstPingAttempt = DateTime.now();
+  }
+
+  // Method khusus untuk initial connection dengan retry terbatas
+  Future<bool> initialConnect() async {
+    _isInitialConnection = true;
+    _retryCount = 0;
+    _connectionStatus = 'Connecting...';
+    notifyListeners();
+
+    for (int attempt = 1; attempt <= initialConnectMaxRetries; attempt++) {
+      try {
+        _connectionStatus =
+            'Connecting... (Attempt $attempt/$initialConnectMaxRetries)';
+        notifyListeners();
+
+        // Coba ping controller
+        await _apiService.ping().timeout(
+          const Duration(seconds: connectionTimeoutSeconds),
+          onTimeout: () => throw TimeoutException('Connection timed out'),
+        );
+
+        // Berhasil connect
+        _isConnected = true;
+        _lastSuccessfulConnection = DateTime.now();
+        _connectionStatus = 'Connected';
+        _retryCount = 0;
+        _isInitialConnection = false;
+
+        // Mulai ping timer setelah berhasil connect
+        _startPingTimer();
+
+        notifyListeners();
+        return true;
+      } catch (e) {
+        String errorMessage = 'Connection failed';
+        if (e is TimeoutException) {
+          errorMessage = 'Connection timeout';
+        }
+
+        _connectionStatus =
+            '$errorMessage (Attempt $attempt/$initialConnectMaxRetries)';
+        notifyListeners();
+
+        // Tunggu sebentar sebelum retry kecuali ini attempt terakhir
+        if (attempt < initialConnectMaxRetries) {
+          await Future.delayed(const Duration(seconds: 2));
+        }
+      }
+    }
+
+    // Semua attempt gagal
+    _isConnected = false;
+    _connectionStatus =
+        'Failed to connect after $initialConnectMaxRetries attempts';
+    _isInitialConnection = false;
+    notifyListeners();
+    return false;
   }
 
   bool get isConnected => _isConnected;
@@ -82,7 +142,9 @@ class ConnectionManager extends ChangeNotifier {
     _cancelPingTimer(); // Batalkan timer yang ada
 
     // Buat timer baru untuk ping berkala
-    _pingTimer = Timer.periodic(const Duration(seconds: pingIntervalSeconds), (_) {
+    _pingTimer = Timer.periodic(const Duration(seconds: pingIntervalSeconds), (
+      _,
+    ) {
       _pingController();
     });
   }
@@ -156,6 +218,12 @@ class ConnectionManager extends ChangeNotifier {
     _isConnected = false;
     _connectionStatus = 'Disconnected: $reason';
 
+    // Jika sedang dalam initial connection, jangan auto-retry
+    if (_isInitialConnection) {
+      notifyListeners();
+      return;
+    }
+
     // Jika baru saja terkoneksi (dalam 30 detik terakhir) sebelum terputus,
     // langsung coba lagi tanpa menunggu grace period
     final lastConnected = _lastSuccessfulConnection;
@@ -182,11 +250,15 @@ class ConnectionManager extends ChangeNotifier {
       _connectionStatus = 'Disconnected: Max retries reached';
       _retryCount = 0;
 
-      // Tunggu 30 detik sebelum mencoba lagi untuk mencegah flood requests
-      Timer(const Duration(seconds: 30), () {
+      // Stop ping timer untuk mencegah lebih banyak request
+      _cancelPingTimer();
+
+      // Tunggu 60 detik sebelum mencoba lagi untuk mencegah flood requests
+      Timer(const Duration(seconds: 60), () {
         _connectionStatus = 'Attempting reconnect after cooldown';
         notifyListeners();
-        _pingController();
+        // Restart ping timer dan coba sekali lagi
+        _startPingTimer();
       });
     }
   }
@@ -208,23 +280,24 @@ class ConnectionManager extends ChangeNotifier {
   void _startRetryMechanism() {
     _cancelRetryTimer(); // Batalkan timer yang ada
 
-    _retryTimer = Timer.periodic(const Duration(seconds: retryIntervalSeconds), (
-      timer,
-    ) {
-      _retryCount++;
-      _connectionStatus = 'Attempting reconnect ($_retryCount/$maxRetries)';
-      notifyListeners();
-
-      if (_retryCount <= maxRetries) {
-        // Coba konek lagi
-        _pingController();
-      } else {
-        // Batas retry sudah tercapai, batalkan timer
-        _cancelRetryTimer();
-        _connectionStatus = 'Failed to reconnect after $maxRetries attempts';
+    _retryTimer = Timer.periodic(
+      const Duration(seconds: retryIntervalSeconds),
+      (timer) {
+        _retryCount++;
+        _connectionStatus = 'Attempting reconnect ($_retryCount/$maxRetries)';
         notifyListeners();
-      }
-    });
+
+        if (_retryCount <= maxRetries) {
+          // Coba konek lagi
+          _pingController();
+        } else {
+          // Batas retry sudah tercapai, batalkan timer
+          _cancelRetryTimer();
+          _connectionStatus = 'Failed to reconnect after $maxRetries attempts';
+          notifyListeners();
+        }
+      },
+    );
   }
 
   void _cancelRetryTimer() {
@@ -232,8 +305,21 @@ class ConnectionManager extends ChangeNotifier {
     _retryTimer = null;
   }
 
-  // Reset mekanisme retry dan coba lagi
+  // Reset mekanisme retry dan coba lagi (untuk tombol manual retry)
+  Future<bool> manualRetry() async {
+    _retryCount = 0;
+    _cancelRetryTimer();
+    _cancelPingTimer();
+
+    // Gunakan initial connect strategy untuk manual retry
+    return await initialConnect();
+  }
+
+  // Method ini hanya untuk maintenance koneksi yang sudah ada
   void resetAndRetry() {
+    if (_isInitialConnection)
+      return; // Jangan interfere dengan initial connection
+
     _retryCount = 0;
     _connectionStatus = 'Reconnecting...';
     _cancelRetryTimer();

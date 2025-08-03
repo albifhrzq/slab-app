@@ -1004,9 +1004,9 @@ class _ProfileScreenState extends State<ProfileScreen>
               ),
               const SizedBox(height: 8),
               if (_isFullCyclePreview)
-                Text(
+                const Text(
                   'Transition through all profiles: Morning → Midday → Evening → Night',
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: Colors.white),
                 )
               else
                 Text(

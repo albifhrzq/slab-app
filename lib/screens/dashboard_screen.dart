@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import '../services/aquarium_api_service.dart';
 import '../services/connection_manager.dart';
 import '../services/manual_settings_cache.dart';
 import '../models/profile.dart';
 import '../widgets/app_logo.dart';
+import '../config/app_config.dart';
 import 'dart:async';
+
+enum ControlMode { manual, auto, off }
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -15,7 +19,7 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  bool _isManualMode = false;
+  ControlMode _currentMode = ControlMode.auto;
   Profile _currentProfile = Profile(
     royalBlue: 0,
     blue: 0,
@@ -34,22 +38,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+
+    // Load state dan auto sync waktu
     _loadCurrentState();
 
     // Mulai timer untuk memperbarui jam setiap detik
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_currentTime != null) {
+      if (mounted) {
         setState(() {
-          // Increment waktu lokal setiap detik
-          _currentTime = _currentTime!.add(const Duration(seconds: 1));
+          // Selalu gunakan waktu phone yang real-time
+          _currentTime = DateTime.now();
         });
       }
     });
 
-    // Update dari server setiap 1 menit untuk menyinkronkan waktu
-    Timer.periodic(const Duration(minutes: 1), (_) {
+    // Sync waktu ke controller setiap 5 menit untuk backup
+    Timer.periodic(const Duration(minutes: 5), (_) {
       if (mounted) {
-        _updateRtcTime();
+        _autoSyncTimeFromPhone();
       }
     });
   }
@@ -60,34 +66,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
-  // Metode untuk mengambil waktu dari RTC controller
-  Future<void> _updateRtcTime() async {
-    try {
-      final apiService = Provider.of<AquariumApiService>(
-        context,
-        listen: false,
-      );
-
-      final timeData = await apiService.getCurrentTime();
-      setState(() {
-        // Parsing format waktu dari controller
-        // Mengasumsikan format: {"hour": 12, "minute": 30, "second": 45, "day": 15, "month": 6, "year": 2023}
-        _currentTime = DateTime(
-          timeData['year'],
-          timeData['month'],
-          timeData['day'],
-          timeData['hour'],
-          timeData['minute'],
-          timeData['second'],
-        );
-      });
-    } catch (e) {
-      // Jika gagal mendapatkan waktu, jangan ubah waktu yang sudah ada
-      print('Error fetching RTC time: $e');
-    }
-  }
-
-  // Metode untuk sinkronisasi waktu smartphone ke RTC
+  // Metode untuk set waktu dari smartphone ke controller
   Future<void> _syncPhoneTimeToRtc() async {
     try {
       final apiService = Provider.of<AquariumApiService>(
@@ -109,7 +88,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Device time synchronized with phone time'),
+            content: Text('Device time updated successfully'),
+            backgroundColor: Colors.green,
           ),
         );
       } else {
@@ -117,8 +97,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error syncing time: ${e.toString()}')),
+        SnackBar(
+          content: Text('Error setting time: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
       );
+    }
+  }
+
+  // Auto sync waktu saat load - otomatis ambil dari phone
+  Future<void> _autoSyncTimeFromPhone() async {
+    try {
+      final apiService = Provider.of<AquariumApiService>(
+        context,
+        listen: false,
+      );
+
+      // Selalu gunakan waktu smartphone
+      final DateTime now = DateTime.now();
+
+      // Set waktu di controller dengan waktu phone
+      await apiService.setTime(now);
+
+      // Update tampilan
+      setState(() {
+        _currentTime = now;
+      });
+    } catch (e) {
+      // Jika gagal sync ke controller, tetap tampilkan waktu phone
+      setState(() {
+        _currentTime = DateTime.now();
+      });
+      print('Auto sync failed, using phone time for display: $e');
     }
   }
 
@@ -131,20 +141,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
         listen: false,
       );
 
+      // Coba koneksi awal dengan retry terbatas
+      final connectionManager = Provider.of<ConnectionManager>(
+        context,
+        listen: false,
+      );
+      final connected = await connectionManager.initialConnect();
+
+      if (!connected) {
+        // Jika gagal connect, gunakan data cache saja
+        final cachedProfile = await ManualSettingsCache.getManualProfile();
+        if (cachedProfile != null) {
+          setState(() {
+            _currentProfile = cachedProfile;
+            _currentMode = ControlMode.manual; // Default ke manual jika offline
+          });
+        }
+
+        // Set waktu dari phone
+        setState(() {
+          _currentTime = DateTime.now();
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Device not connected. Using offline mode.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      // Jika berhasil connect, lanjutkan load data dari device
       // Simpan dulu apakah sedang dalam mode manual
-      final wasInManualMode = _isManualMode;
+      final wasInManualMode = _currentMode == ControlMode.manual;
       // Simpan pengaturan manual saat ini
       final previousProfile = _currentProfile;
 
       try {
         // Muat mode operasi saat ini
         final mode = await apiService.getMode();
-        final isNowManualMode = mode == 'manual';
+        final newMode = _getModeFromString(mode);
 
-        setState(() => _isManualMode = isNowManualMode);
+        setState(() => _currentMode = newMode);
 
         // Jika dalam mode manual, prioritaskan pengaturan cache
-        if (isNowManualMode) {
+        if (newMode == ControlMode.manual) {
           // Coba muat dari cache terlebih dahulu
           final cachedProfile = await ManualSettingsCache.getManualProfile();
 
@@ -191,8 +233,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
       }
 
-      // Muat waktu dari RTC
-      await _updateRtcTime();
+      // Auto sync dan set waktu dari phone
+      await _autoSyncTimeFromPhone();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error loading data: ${e.toString()}')),
@@ -213,19 +255,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
         a.white == b.white;
   }
 
-  Future<void> _toggleMode(bool value) async {
+  Future<void> _setMode(ControlMode newMode) async {
     try {
       final apiService = Provider.of<AquariumApiService>(
         context,
         listen: false,
       );
-      final success = await apiService.setMode(value ? 'manual' : 'auto');
+      final success = await apiService.setMode(_getModeString(newMode));
 
       if (success) {
-        setState(() => _isManualMode = value);
+        setState(() => _currentMode = newMode);
 
         // If switching to manual mode, load saved manual settings
-        if (value) {
+        if (newMode == ControlMode.manual) {
           final cachedProfile = await ManualSettingsCache.getManualProfile();
           if (cachedProfile != null) {
             setState(() => _currentProfile = cachedProfile);
@@ -233,6 +275,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
             // Apply the cached settings to the device
             await apiService.setManualLedValues(_currentProfile.toJson());
           }
+        } else if (newMode == ControlMode.off) {
+          // Turn off all LEDs
+          final offProfile = Profile(
+            royalBlue: 0,
+            blue: 0,
+            uv: 0,
+            violet: 0,
+            red: 0,
+            green: 0,
+            white: 0,
+          );
+          setState(() => _currentProfile = offProfile);
+          await apiService.setManualLedValues(offProfile.toJson());
         }
       } else {
         throw Exception('Failed to set mode');
@@ -429,72 +484,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ),
                               const SizedBox(height: 12),
                               Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceEvenly,
+                                mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Expanded(
-                                    child: OutlinedButton.icon(
-                                      icon: const Icon(
-                                        Icons.sync,
-                                        size: 14,
+                                  OutlinedButton.icon(
+                                    icon: const Icon(
+                                      Icons.access_time,
+                                      size: 16,
+                                      color: Colors.white,
+                                    ),
+                                    label: const Text(
+                                      'Set Time to Device',
+                                      style: TextStyle(
                                         color: Colors.white,
-                                      ),
-                                      label: const Text(
-                                        'Get RTC',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                      onPressed: () async {
-                                        await _updateRtcTime();
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
-                                          const SnackBar(
-                                            content: Text(
-                                              'Clock synchronized with RTC',
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                      style: OutlinedButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 6,
-                                        ),
-                                        visualDensity: VisualDensity.compact,
-                                        side: const BorderSide(
-                                          color: Colors.white,
-                                        ),
+                                        fontSize: 13,
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: OutlinedButton.icon(
-                                      icon: const Icon(
-                                        Icons.smartphone,
-                                        size: 14,
+                                    onPressed: _syncPhoneTimeToRtc,
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 8,
+                                      ),
+                                      side: const BorderSide(
                                         color: Colors.white,
-                                      ),
-                                      label: const Text(
-                                        'Sync Phone',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                      onPressed: _syncPhoneTimeToRtc,
-                                      style: OutlinedButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 6,
-                                        ),
-                                        visualDensity: VisualDensity.compact,
-                                        side: const BorderSide(
-                                          color: Colors.white,
-                                        ),
                                       ),
                                     ),
                                   ),
@@ -508,20 +520,50 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                     const SizedBox(height: 16),
 
-                    // Mode toggle
+                    // Mode selection buttons
                     Card(
                       child: Padding(
                         padding: const EdgeInsets.all(16.0),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              'Mode: ${_isManualMode ? 'Manual' : 'Auto'}',
-                              style: const TextStyle(fontSize: 18),
+                            const Text(
+                              'Control Mode',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                            Switch(
-                              value: _isManualMode,
-                              onChanged: _toggleMode,
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildModeButton(
+                                    ControlMode.auto,
+                                    'Auto',
+                                    Icons.auto_mode,
+                                    Colors.green,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: _buildModeButton(
+                                    ControlMode.manual,
+                                    'Manual',
+                                    Icons.tune,
+                                    Colors.blue,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: _buildModeButton(
+                                    ControlMode.off,
+                                    'Off',
+                                    Icons.power_settings_new,
+                                    Colors.red,
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -604,57 +646,217 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                     const SizedBox(height: 16),
 
-                    // Refresh button
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Refresh'),
-                      onPressed: () async {
-                        // Simpan pengaturan manual saat ini sebelum refresh
-                        if (_isManualMode) {
-                          await ManualSettingsCache.saveManualProfile(
-                            _currentProfile,
+                    // Connection status dan retry button
+                    Consumer<ConnectionManager>(
+                      builder: (context, connectionManager, child) {
+                        if (connectionManager.isConnected) {
+                          // Jika terhubung, tampilkan tombol refresh biasa
+                          return ElevatedButton.icon(
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Refresh Data'),
+                            onPressed: () async {
+                              // Simpan pengaturan manual saat ini sebelum refresh
+                              if (_isManualMode) {
+                                await ManualSettingsCache.saveManualProfile(
+                                  _currentProfile,
+                                );
+                              }
+
+                              // Sekarang muat ulang data
+                              await _loadCurrentState();
+
+                              // Jika dalam mode manual, pastikan pengaturan yang tersimpan digunakan
+                              if (_isManualMode) {
+                                final cachedProfile =
+                                    await ManualSettingsCache.getManualProfile();
+                                if (cachedProfile != null) {
+                                  setState(() {
+                                    _currentProfile = cachedProfile;
+                                  });
+
+                                  // Terapkan pengaturan ke perangkat
+                                  final apiService =
+                                      Provider.of<AquariumApiService>(
+                                        context,
+                                        listen: false,
+                                      );
+                                  await apiService.setManualLedValues(
+                                    _currentProfile.toJson(),
+                                  );
+                                }
+                              }
+
+                              // Tampilkan notifikasi refresh berhasil
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Data refreshed successfully'),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                            },
+                          );
+                        } else {
+                          // Jika tidak terhubung, tampilkan tombol retry connection
+                          return Column(
+                            children: [
+                              // Status koneksi
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.orange),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.wifi_off,
+                                      color: Colors.orange,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        connectionManager.connectionStatus,
+                                        style: const TextStyle(
+                                          color: Colors.orange,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              // Tombol retry
+                              ElevatedButton.icon(
+                                icon: const Icon(Icons.wifi),
+                                label: const Text('Retry Connection'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.orange,
+                                  foregroundColor: Colors.white,
+                                ),
+                                onPressed:
+                                    connectionManager.isRetrying
+                                        ? null
+                                        : () async {
+                                          final success =
+                                              await connectionManager
+                                                  .manualRetry();
+                                          if (success) {
+                                            // Jika berhasil connect, load data
+                                            await _loadCurrentState();
+
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  'Connected successfully!',
+                                                ),
+                                                backgroundColor: Colors.green,
+                                              ),
+                                            );
+                                          }
+                                        },
+                              ),
+                            ],
                           );
                         }
-
-                        // Sekarang muat ulang data
-                        await _loadCurrentState();
-
-                        // Jika dalam mode manual, pastikan pengaturan yang tersimpan digunakan
-                        if (_isManualMode) {
-                          final cachedProfile =
-                              await ManualSettingsCache.getManualProfile();
-                          if (cachedProfile != null) {
-                            setState(() {
-                              _currentProfile = cachedProfile;
-                            });
-
-                            // Jika terhubung, terapkan pengaturan ke perangkat
-                            final connectionManager =
-                                Provider.of<ConnectionManager>(
-                                  context,
-                                  listen: false,
-                                );
-                            if (connectionManager.isConnected) {
-                              final apiService =
-                                  Provider.of<AquariumApiService>(
-                                    context,
-                                    listen: false,
-                                  );
-                              await apiService.setManualLedValues(
-                                _currentProfile.toJson(),
-                              );
-                            }
-                          }
-                        }
-
-                        // Tampilkan notifikasi refresh berhasil
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Data refreshed successfully'),
-                          ),
-                        );
                       },
                     ),
+
+                    // Debug panel (hanya tampil di debug mode)
+                    if (kDebugMode) ...[
+                      const SizedBox(height: 24),
+                      Card(
+                        color: Colors.orange.withOpacity(0.1),
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.developer_mode,
+                                    color: Colors.orange[700],
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Development Mode',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.orange[700],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                children: [
+                                  Icon(
+                                    AppConfig.enableMockMode
+                                        ? Icons.cloud_off
+                                        : Icons.wifi,
+                                    size: 16,
+                                    color:
+                                        AppConfig.enableMockMode
+                                            ? Colors.orange
+                                            : Colors.green,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    AppConfig.enableMockMode
+                                        ? 'Mock Mode (Offline)'
+                                        : 'Hardware Mode (Online)',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color:
+                                          AppConfig.enableMockMode
+                                              ? Colors.orange[700]
+                                              : Colors.green[700],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Base URL: ${AppConfig.defaultBaseUrl}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                              Text(
+                                'Timeout: ${AppConfig.defaultTimeoutSeconds}s | Mock Delay: ${AppConfig.mockDelayMs}ms',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                              if (AppConfig.enableMockMode) ...[
+                                const SizedBox(height: 8),
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.orange.withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'To disable mock mode, run:\nflutter run --dart-define=MOCK_MODE=false',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontFamily: 'monospace',
+                                      color: Colors.orange[800],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -719,14 +921,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Widget _buildModeButton(
+    ControlMode mode,
+    String label,
+    IconData icon,
+    Color color,
+  ) {
+    final isSelected = _currentMode == mode;
+
+    return ElevatedButton.icon(
+      onPressed: () => _setMode(mode),
+      icon: Icon(icon, size: 20, color: isSelected ? Colors.white : color),
+      label: Text(
+        label,
+        style: TextStyle(
+          color: isSelected ? Colors.white : color,
+          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+        ),
+      ),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: isSelected ? color : Colors.transparent,
+        foregroundColor: isSelected ? Colors.white : color,
+        side: BorderSide(color: color, width: 2),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        elevation: isSelected ? 4 : 0,
+      ),
+    );
+  }
+
   // Fungsi untuk mengkonversi nilai intensitas (0-255) ke persentase (0-100%)
   int _intensityToPercent(int intensityValue) {
     return (intensityValue / 255 * 100).round().clamp(0, 100);
-  }
-
-  // Fungsi untuk mengkonversi nilai persentase (0-100%) ke intensitas (0-255)
-  int _percentToIntensity(int percentValue) {
-    return (percentValue * 2.55).round().clamp(0, 255);
   }
 
   // Widget untuk menampilkan pesan ketika tidak terhubung
@@ -834,4 +1060,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return '$weekday, $month ${time.day}, ${time.year}';
   }
+
+  // Helper methods untuk mode control
+  ControlMode _getModeFromString(String mode) {
+    switch (mode.toLowerCase()) {
+      case 'manual':
+        return ControlMode.manual;
+      case 'auto':
+      case 'automatic':
+        return ControlMode.auto;
+      case 'off':
+        return ControlMode.off;
+      default:
+        return ControlMode.auto;
+    }
+  }
+
+  String _getModeString(ControlMode mode) {
+    switch (mode) {
+      case ControlMode.manual:
+        return 'manual';
+      case ControlMode.auto:
+        return 'auto';
+      case ControlMode.off:
+        return 'off';
+    }
+  }
+
+  bool get _isManualMode => _currentMode == ControlMode.manual;
 }
