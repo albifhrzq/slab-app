@@ -355,10 +355,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: const Row(
           children: [AppLogo(size: 24), SizedBox(width: 8), Text('SLAB')],
         ),
+        automaticallyImplyLeading: false,
         actions: [
           // Menampilkan indikator koneksi
           Padding(
-            padding: const EdgeInsets.only(right: 8.0),
+            padding: const EdgeInsets.only(right: 16.0),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
@@ -392,10 +393,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ],
               ),
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () => Navigator.pushNamed(context, '/settings'),
           ),
         ],
       ),

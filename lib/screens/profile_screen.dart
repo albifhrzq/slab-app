@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:fl_chart/fl_chart.dart';
 import '../services/aquarium_api_service.dart';
 import '../services/connection_manager.dart';
 import '../services/profile_cache.dart';
@@ -37,7 +36,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   final int _previewSteps = 30; // 30 detik untuk preview
   final int _fullCyclePreviewSteps = 30; // 120 detik untuk preview full cycle
   bool _isPaused = false;
-  String _selectedColor = 'royalBlue'; // Warna yang dipilih untuk diedit
+  final Map<String, int> _selectedHour = {}; // Track selected hour for each profile type
   final List<String> _colorOptions = [
     'royalBlue',
     'blue',
@@ -62,6 +61,10 @@ class _ProfileScreenState extends State<ProfileScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
+    // Initialize selected hour for each profile type (default to first hour)
+    for (final type in _profileTypes) {
+      _selectedHour[type] = _getHoursForType(type).first;
+    }
     _loadProfiles();
   }
 
@@ -164,6 +167,17 @@ class _ProfileScreenState extends State<ProfileScreen>
     }
 
     _hourlySchedules[type] = schedule;
+  }
+
+  // Get hours for a specific profile type
+  List<int> _getHoursForType(String type) {
+    final Map<String, List<int>> typeHours = {
+      'morning': [6, 7, 8, 9, 10, 11, 12],
+      'midday': [12, 13, 14, 15, 16, 17, 18],
+      'evening': [18, 19, 20, 21, 22, 23, 0],
+      'night': [0, 1, 2, 3, 4, 5, 6],
+    };
+    return typeHours[type] ?? [0, 1, 2, 3, 4, 5];
   }
 
   Future<void> _saveProfile(String type, Profile profile) async {
@@ -536,8 +550,251 @@ class _ProfileScreenState extends State<ProfileScreen>
     return (start + (end - start) * progress).round();
   }
 
-  // Update profile value at a specific hour
-  void _updateProfileAtHour(String type, int hour, String colorKey, int value) {
+  int _getProfileValue(Profile profile, String colorKey) {
+    switch (colorKey) {
+      case 'royalBlue':
+        return profile.royalBlue;
+      case 'blue':
+        return profile.blue;
+      case 'uv':
+        return profile.uv;
+      case 'violet':
+        return profile.violet;
+      case 'red':
+        return profile.red;
+      case 'green':
+        return profile.green;
+      case 'white':
+        return profile.white;
+      default:
+        return 0;
+    }
+  }
+
+  String _getColorName(String colorKey) {
+    switch (colorKey) {
+      case 'royalBlue':
+        return 'Royal Blue';
+      case 'blue':
+        return 'Blue';
+      case 'uv':
+        return 'UV';
+      case 'violet':
+        return 'Violet';
+      case 'red':
+        return 'Red';
+      case 'green':
+        return 'Green';
+      case 'white':
+        return 'White';
+      default:
+        return colorKey;
+    }
+  }
+
+  // Get profile for a specific hour within a profile type
+  Profile _getProfileForHour(String type, int hour) {
+    final schedulePoints = _hourlySchedules[type] ?? [];
+    final point = schedulePoints.firstWhere(
+      (p) => p.hour == hour,
+      orElse: () => schedulePoints.isNotEmpty 
+        ? schedulePoints.first 
+        : LightSchedulePoint(hour, _profiles[type] ?? Profile(
+            royalBlue: 0, blue: 0, uv: 0, violet: 0,
+            red: 0, green: 0, white: 0,
+          )),
+    );
+    return point.profile;
+  }
+
+  // Build hour selector widget
+  Widget _buildHourSelector(String type) {
+    final hours = _getHoursForType(type);
+    final selectedHour = _selectedHour[type] ?? hours.first;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Select Hour for ${type.toUpperCase()} Profile:',
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: hours.map((hour) {
+                final isSelected = hour == selectedHour;
+                return GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _selectedHour[type] = hour;
+                    });
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isSelected 
+                        ? Theme.of(context).primaryColor 
+                        : Colors.grey.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: isSelected 
+                          ? Theme.of(context).primaryColor 
+                          : Colors.grey.withOpacity(0.5),
+                        width: 1,
+                      ),
+                    ),
+                    child: Text(
+                      '${hour.toString().padLeft(2, '0')}:00',
+                      style: TextStyle(
+                        color: isSelected ? Colors.white : Colors.black87,
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildLedSliders(String type, Profile profile) {
+    // Get the profile for the selected hour instead of the main profile
+    final selectedHour = _selectedHour[type] ?? _getHoursForType(type).first;
+    final hourProfile = _getProfileForHour(type, selectedHour);
+    
+    return _colorOptions.map((color) {
+      final value = _getProfileValue(hourProfile, color);
+      final percent = (value / 255 * 100).round();
+
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 16,
+                  height: 16,
+                  decoration: BoxDecoration(
+                    color: _colorMap[color],
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 1),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _getColorName(color),
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '$percent%',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                activeTrackColor: _colorMap[color],
+                inactiveTrackColor: _colorMap[color]?.withOpacity(0.3),
+                thumbColor: _colorMap[color],
+                overlayColor: _colorMap[color]?.withOpacity(0.3),
+                valueIndicatorColor: _colorMap[color],
+                trackHeight: 6,
+              ),
+              child: Slider(
+                value: percent.toDouble(),
+                min: 0,
+                max: 100,
+                divisions: 100,
+                label: '$percent%',
+                onChanged: (newPercent) {
+                  final newValue = (newPercent * 255 / 100).round().clamp(
+                    0,
+                    255,
+                  );
+                  _updateProfileValueForHour(type, selectedHour, color, newValue);
+                },
+              ),
+            ),
+          ],
+        ),
+      );
+    }).toList();
+  }
+
+  void _updateProfileValue(String type, String colorKey, int newValue) {
+    final currentProfile = _profiles[type];
+    if (currentProfile == null) return;
+
+    Profile updatedProfile;
+    switch (colorKey) {
+      case 'royalBlue':
+        updatedProfile = currentProfile.copyWith(royalBlue: newValue);
+        break;
+      case 'blue':
+        updatedProfile = currentProfile.copyWith(blue: newValue);
+        break;
+      case 'uv':
+        updatedProfile = currentProfile.copyWith(uv: newValue);
+        break;
+      case 'violet':
+        updatedProfile = currentProfile.copyWith(violet: newValue);
+        break;
+      case 'red':
+        updatedProfile = currentProfile.copyWith(red: newValue);
+        break;
+      case 'green':
+        updatedProfile = currentProfile.copyWith(green: newValue);
+        break;
+      case 'white':
+        updatedProfile = currentProfile.copyWith(white: newValue);
+        break;
+      default:
+        return;
+    }
+
+    setState(() {
+      _profiles[type] = updatedProfile;
+    });
+  }
+
+  // Update profile value for a specific hour
+  void _updateProfileValueForHour(String type, int hour, String colorKey, int newValue) {
     final schedulePoints = _hourlySchedules[type] ?? [];
     final pointIndex = schedulePoints.indexWhere((point) => point.hour == hour);
 
@@ -547,25 +804,25 @@ class _ProfileScreenState extends State<ProfileScreen>
 
       switch (colorKey) {
         case 'royalBlue':
-          updatedProfile = oldPoint.profile.copyWith(royalBlue: value);
+          updatedProfile = oldPoint.profile.copyWith(royalBlue: newValue);
           break;
         case 'blue':
-          updatedProfile = oldPoint.profile.copyWith(blue: value);
+          updatedProfile = oldPoint.profile.copyWith(blue: newValue);
           break;
         case 'uv':
-          updatedProfile = oldPoint.profile.copyWith(uv: value);
+          updatedProfile = oldPoint.profile.copyWith(uv: newValue);
           break;
         case 'violet':
-          updatedProfile = oldPoint.profile.copyWith(violet: value);
+          updatedProfile = oldPoint.profile.copyWith(violet: newValue);
           break;
         case 'red':
-          updatedProfile = oldPoint.profile.copyWith(red: value);
+          updatedProfile = oldPoint.profile.copyWith(red: newValue);
           break;
         case 'green':
-          updatedProfile = oldPoint.profile.copyWith(green: value);
+          updatedProfile = oldPoint.profile.copyWith(green: newValue);
           break;
         case 'white':
-          updatedProfile = oldPoint.profile.copyWith(white: value);
+          updatedProfile = oldPoint.profile.copyWith(white: newValue);
           break;
         default:
           updatedProfile = oldPoint.profile;
@@ -614,362 +871,6 @@ class _ProfileScreenState extends State<ProfileScreen>
         white: (totalWhite / count).round(),
       );
     });
-  }
-
-  Widget _buildHourlyIntensityChart(String type) {
-    final schedulePoints = _hourlySchedules[type] ?? [];
-    if (schedulePoints.isEmpty) return Container();
-
-    // Sort schedule points by hour
-    schedulePoints.sort((a, b) => a.hour.compareTo(b.hour));
-
-    return Container(
-      height: 280,
-      padding: const EdgeInsets.only(top: 20, right: 20, left: 8, bottom: 12),
-      child: LineChart(
-        LineChartData(
-          gridData: const FlGridData(show: true),
-          titlesData: FlTitlesData(
-            leftTitles: AxisTitles(
-              sideTitles: SideTitles(
-                showTitles: true,
-                reservedSize: 40,
-                getTitlesWidget: (value, meta) {
-                  // Konversi nilai 0-255 menjadi persentase 0-100%
-                  final percentValue = _intensityToPercent(value.toInt());
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8.0),
-                    child: Text(
-                      '$percentValue%',
-                      style: TextStyle(
-                        color: Colors.grey[600],
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                      ),
-                    ),
-                  );
-                },
-              ),
-              axisNameWidget: const Text(
-                'Intensity (%)',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-            ),
-            bottomTitles: AxisTitles(
-              sideTitles: SideTitles(
-                showTitles: true,
-                reservedSize: 30,
-                interval: 1,
-                getTitlesWidget: (value, meta) {
-                  final index = value.toInt();
-                  if (index < 0 || index >= schedulePoints.length) {
-                    return const Text('');
-                  }
-                  return Padding(
-                    padding: const EdgeInsets.only(top: 8.0),
-                    child: Text(
-                      '${schedulePoints[index].hour}:00',
-                      style: TextStyle(
-                        color: Colors.grey[600],
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                      ),
-                    ),
-                  );
-                },
-              ),
-              axisNameWidget: const Text(
-                'Hour',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-            ),
-            rightTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false),
-            ),
-            topTitles: AxisTitles(
-              sideTitles: SideTitles(
-                showTitles: true,
-                reservedSize: 30,
-                getTitlesWidget: (value, meta) {
-                  if (value.toInt() == schedulePoints.length ~/ 2) {
-                    return const Text(
-                      'Intensity All Colors',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    );
-                  }
-                  return const Text('');
-                },
-              ),
-            ),
-          ),
-          borderData: FlBorderData(show: true),
-          lineTouchData: LineTouchData(
-            enabled: true,
-            touchTooltipData: LineTouchTooltipData(
-              tooltipBgColor: Colors.blueGrey.withOpacity(0.8),
-              tooltipMargin: 8,
-              getTooltipItems: (List<LineBarSpot> touchedSpots) {
-                // Tampilkan tooltip untuk semua warna
-                return touchedSpots.map((spot) {
-                  final colorKey = _colorOptions[spot.barIndex];
-                  final percentValue = _intensityToPercent(spot.y.toInt());
-                  final isSelected = colorKey == _selectedColor;
-
-                  return LineTooltipItem(
-                    '${_getColorName(colorKey)}: $percentValue%',
-                    TextStyle(
-                      color: Colors.white,
-                      fontWeight:
-                          isSelected ? FontWeight.bold : FontWeight.normal,
-                    ),
-                  );
-                }).toList();
-              },
-            ),
-            touchCallback: (
-              FlTouchEvent event,
-              LineTouchResponse? touchResponse,
-            ) {
-              // Hanya proses event jika ada response valid
-              if (touchResponse == null ||
-                  touchResponse.lineBarSpots == null ||
-                  touchResponse.lineBarSpots!.isEmpty) {
-                return;
-              }
-
-              // Tangani semua jenis event input
-              if (event is FlTapDownEvent ||
-                  event is FlTapUpEvent ||
-                  event is FlLongPressStart ||
-                  event is FlLongPressMoveUpdate ||
-                  event is FlPanDownEvent ||
-                  event is FlPanUpdateEvent) {
-                // Ambil lokasi x (jam) yang sedang ditekan/digeser
-                final touchedX = touchResponse.lineBarSpots!.first.x.toInt();
-                if (touchedX < 0 || touchedX >= schedulePoints.length) return;
-
-                final hour = schedulePoints[touchedX].hour;
-
-                // Temukan indeks warna yang dipilih dalam array _colorOptions
-                final selectedColorIndex = _colorOptions.indexOf(
-                  _selectedColor,
-                );
-
-                // Untuk event geser, gunakan posisi y dari event
-                if ((event is FlPanUpdateEvent ||
-                        event is FlLongPressMoveUpdate) &&
-                    event.localPosition != null) {
-                  // Untuk gestur geser dan tekan lama, ambil posisi y dari event
-                  final RenderBox renderBox =
-                      context.findRenderObject() as RenderBox;
-                  final chartPosition = renderBox.globalToLocal(
-                    event.localPosition!,
-                  );
-
-                  // Area grafik sekitar 280 pixel
-                  double chartHeight = 280;
-                  double topPadding = 20;
-                  // Hitung nilai relatif dengan memperhatikan bahwa 0 di bawah dan 255 di atas
-                  double relativeY =
-                      chartHeight - (chartPosition.dy - topPadding);
-                  // Pastikan nilai dalam batas yang benar
-                  relativeY = relativeY.clamp(0.0, chartHeight);
-
-                  // Konversi ke nilai intensitas (0-255)
-                  int newValue = ((relativeY / chartHeight) * 255)
-                      .round()
-                      .clamp(0, 255);
-
-                  // Update profil dengan nilai baru untuk warna yang dipilih
-                  _updateProfileAtHour(type, hour, _selectedColor, newValue);
-                  setState(() {});
-                }
-                // Untuk event tap, cari data point terdekat
-                else {
-                  // Coba cari spot yang sesuai dengan warna yang dipilih
-                  final selectedBarSpots =
-                      touchResponse.lineBarSpots!
-                          .where((spot) => spot.barIndex == selectedColorIndex)
-                          .toList();
-
-                  if (selectedBarSpots.isNotEmpty) {
-                    // Jika ada titik untuk warna yang dipilih, gunakan nilainya
-                    int newValue = selectedBarSpots.first.y.toInt().clamp(
-                      0,
-                      255,
-                    );
-                    _updateProfileAtHour(type, hour, _selectedColor, newValue);
-                    setState(() {});
-                  }
-                }
-              }
-            },
-          ),
-          lineBarsData:
-              _colorOptions.map((color) {
-                bool isSelected = color == _selectedColor;
-                return LineChartBarData(
-                  spots: List.generate(schedulePoints.length, (index) {
-                    final point = schedulePoints[index];
-                    final value = _getProfileValue(point.profile, color);
-                    return FlSpot(index.toDouble(), value.toDouble());
-                  }),
-                  isCurved: true,
-                  color: _colorMap[color] ?? Colors.blue,
-                  barWidth: isSelected ? 4.0 : 1.5,
-                  isStrokeCapRound: true,
-                  dotData: FlDotData(
-                    show: isSelected,
-                    getDotPainter: (spot, percent, barData, index) {
-                      return FlDotCirclePainter(
-                        radius: isSelected ? 6 : 4,
-                        color: _colorMap[color] ?? Colors.blue,
-                        strokeColor:
-                            isSelected ? Colors.white : Colors.transparent,
-                        strokeWidth: isSelected ? 2 : 0,
-                      );
-                    },
-                  ),
-                  belowBarData: BarAreaData(
-                    show: isSelected,
-                    color: (_colorMap[color] ?? Colors.blue).withOpacity(0.1),
-                    applyCutOffY: true,
-                    cutOffY: 0,
-                    gradient: LinearGradient(
-                      colors: [
-                        (_colorMap[color] ?? Colors.blue).withOpacity(0.4),
-                        (_colorMap[color] ?? Colors.blue).withOpacity(0.0),
-                      ],
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                    ),
-                  ),
-                  dashArray: isSelected ? null : [4, 2],
-                );
-              }).toList(),
-          minX: 0,
-          maxX: schedulePoints.length - 1.0,
-          minY: 0,
-          maxY: 255,
-        ),
-      ),
-    );
-  }
-
-  int _getProfileValue(Profile profile, String colorKey) {
-    switch (colorKey) {
-      case 'royalBlue':
-        return profile.royalBlue;
-      case 'blue':
-        return profile.blue;
-      case 'uv':
-        return profile.uv;
-      case 'violet':
-        return profile.violet;
-      case 'red':
-        return profile.red;
-      case 'green':
-        return profile.green;
-      case 'white':
-        return profile.white;
-      default:
-        return 0;
-    }
-  }
-
-  Widget _buildColorSelector() {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Select color to edit:',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children:
-                _colorOptions.map((color) {
-                  final isSelected = color == _selectedColor;
-                  return GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        _selectedColor = color;
-                      });
-                    },
-                    child: Column(
-                      children: [
-                        Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: _colorMap[color],
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color:
-                                  isSelected
-                                      ? Colors.white
-                                      : Colors.transparent,
-                              width: 3,
-                            ),
-                            boxShadow:
-                                isSelected
-                                    ? [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.3),
-                                        blurRadius: 5,
-                                        spreadRadius: 1,
-                                      ),
-                                    ]
-                                    : null,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _getColorName(color),
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight:
-                                isSelected
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }).toList(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _getColorName(String colorKey) {
-    switch (colorKey) {
-      case 'royalBlue':
-        return 'R. Blue';
-      case 'blue':
-        return 'Blue';
-      case 'uv':
-        return 'UV';
-      case 'violet':
-        return 'Violet';
-      case 'red':
-        return 'Red';
-      case 'green':
-        return 'Green';
-      case 'white':
-        return 'White';
-      default:
-        return colorKey;
-    }
   }
 
   Widget _buildPreviewOverlay() {
@@ -1278,11 +1179,12 @@ class _ProfileScreenState extends State<ProfileScreen>
     return Scaffold(
       appBar: AppBar(
         title: const Row(
-          children: [AppLogo(size: 24), SizedBox(width: 8), Text('SLAB')],
+          children: [AppLogo(size: 24), SizedBox(width: 8), Text('Profiles')],
         ),
+        automaticallyImplyLeading: false,
         actions: [
           Padding(
-            padding: const EdgeInsets.only(right: 8.0),
+            padding: const EdgeInsets.only(right: 16.0),
             child: Center(
               child:
                   connectionManager.isConnected
@@ -1323,152 +1225,96 @@ class _ProfileScreenState extends State<ProfileScreen>
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Text(
-                              '${type.substring(0, 1).toUpperCase()}${type.substring(1)} Profile',
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-
-                            // Color selector
-                            _buildColorSelector(),
-                            const SizedBox(height: 16),
-
-                            // Hourly intensity chart
-                            Card(
-                              child: Padding(
-                                padding: const EdgeInsets.all(8.0),
-                                child: Column(
-                                  children: [
-                                    const Text(
-                                      'Hourly Intensity Settings',
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    Text(
-                                      'Tap or drag on chart to change intensity values',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey[600],
-                                      ),
-                                    ),
-                                    Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        const Icon(
-                                          Icons.info_outline,
-                                          size: 14,
-                                          color: Colors.blue,
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Flexible(
-                                          child: Text(
-                                            'Make sure to select the color you want to edit first',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: Colors.blue[700],
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'Only the selected color will be highlighted and editable',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey[700],
-                                        fontStyle: FontStyle.italic,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    // Tambahkan Container dengan tinggi tetap untuk mencegah layout shift
-                                    SizedBox(
-                                      height:
-                                          320, // Tinggi tetap untuk grafik dan legenda
-                                      child: Column(
-                                        children: [
-                                          Expanded(
-                                            child: _buildHourlyIntensityChart(
-                                              type,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 8),
-                                          _buildChartLegend(),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-
-                            // Preview Button
-                            ElevatedButton.icon(
-                              icon: const Icon(Icons.play_arrow),
-                              label: const Text('Preview Transition'),
-                              onPressed: _startPreview,
-                            ),
-                            const SizedBox(height: 8),
-                            // Full Cycle Preview Button
-                            ElevatedButton.icon(
-                              icon: const Icon(Icons.repeat),
-                              label: const Text('Preview Full Cycle'),
-                              onPressed: _startFullCyclePreview,
-                            ),
-                            const SizedBox(height: 16),
-
-                            // Current profile info
+                            // Hour Selector
+                            _buildHourSelector(type),
+                            
+                            // LED Intensity Sliders
                             Card(
                               child: Padding(
                                 padding: const EdgeInsets.all(16.0),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Text(
-                                      'Average Intensity Values',
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold,
-                                      ),
+                                    Row(
+                                      children: [
+                                        Text(
+                                          '${type.toUpperCase()} Profile - LED Intensity',
+                                          style: const TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        const Spacer(),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: Theme.of(context).primaryColor.withOpacity(0.1),
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                          child: Text(
+                                            '${(_selectedHour[type] ?? _getHoursForType(type).first).toString().padLeft(2, '0')}:00',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                              color: Theme.of(context).primaryColor,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      'Royal Blue: ${_formatToPercent(profile.royalBlue)}',
-                                    ),
-                                    Text(
-                                      'Blue: ${_formatToPercent(profile.blue)}',
-                                    ),
-                                    Text('UV: ${_formatToPercent(profile.uv)}'),
-                                    Text(
-                                      'Violet: ${_formatToPercent(profile.violet)}',
-                                    ),
-                                    Text(
-                                      'Red: ${_formatToPercent(profile.red)}',
-                                    ),
-                                    Text(
-                                      'Green: ${_formatToPercent(profile.green)}',
-                                    ),
-                                    Text(
-                                      'White: ${_formatToPercent(profile.white)}',
-                                    ),
+                                    const SizedBox(height: 16),
+                                    ..._buildLedSliders(type, profile),
                                   ],
                                 ),
                               ),
                             ),
                             const SizedBox(height: 16),
 
+                            // Preview controls
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed: _startPreview,
+                                    icon: const Icon(Icons.play_arrow),
+                                    label: const Text('Preview'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.blue,
+                                      foregroundColor: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed: _startFullCyclePreview,
+                                    icon: const Icon(Icons.all_inclusive),
+                                    label: const Text('Full Cycle'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.purple,
+                                      foregroundColor: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+
+                            // Save button
                             ElevatedButton.icon(
+                              onPressed: () => _saveProfile(type, profile),
                               icon: const Icon(Icons.save),
                               label: const Text('Save Profile'),
-                              onPressed: () => _saveProfile(type, profile),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                              ),
                             ),
                           ],
                         ),
@@ -1506,56 +1352,6 @@ class _ProfileScreenState extends State<ProfileScreen>
           child: Center(child: Text('Connect to controller to edit profiles')),
         ),
       ],
-    );
-  }
-
-  Widget _buildChartLegend() {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Colors.grey.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Wrap(
-        spacing: 12,
-        runSpacing: 8,
-        children:
-            _colorOptions.map((color) {
-              return SizedBox(
-                width: 120,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: _colorMap[color],
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _getColorName(color),
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      '(${color == _selectedColor ? 'active' : ''})',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontStyle: FontStyle.italic,
-                        color:
-                            color == _selectedColor
-                                ? Colors.blue
-                                : Colors.transparent,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }).toList(),
-      ),
     );
   }
 
@@ -1663,20 +1459,5 @@ class _ProfileScreenState extends State<ProfileScreen>
         ],
       ),
     );
-  }
-
-  // Konversi nilai persentase (0-100) ke nilai intensitas (0-255)
-  int _percentToIntensity(int percentValue) {
-    return (percentValue * 2.55).round().clamp(0, 255);
-  }
-
-  // Konversi nilai intensitas (0-255) ke nilai persentase (0-100)
-  int _intensityToPercent(int intensityValue) {
-    return (intensityValue / 255 * 100).round().clamp(0, 100);
-  }
-
-  // Format nilai intensitas ke string persentase
-  String _formatToPercent(int value) {
-    return '${_intensityToPercent(value)}%';
   }
 }

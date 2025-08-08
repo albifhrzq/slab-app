@@ -85,8 +85,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Row(
-          children: [AppLogo(size: 24), SizedBox(width: 8), Text('SLAB')],
+          children: [AppLogo(size: 24), SizedBox(width: 8), Text('Settings')],
         ),
+        automaticallyImplyLeading: false,
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
