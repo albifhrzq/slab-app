@@ -23,6 +23,18 @@ class AppConfig {
     defaultValue: 5,
   );
 
+  // Faster timeout for profile loading to improve UX
+  static const int profileTimeoutSeconds = int.fromEnvironment(
+    'PROFILE_TIMEOUT_SECONDS',
+    defaultValue: 3,
+  );
+
+  // Quick timeout for connection checks
+  static const int connectionTimeoutSeconds = int.fromEnvironment(
+    'CONNECTION_TIMEOUT_SECONDS',
+    defaultValue: 2,
+  );
+
   // Debug logging
   static const bool enableDebugLogs = bool.fromEnvironment(
     'DEBUG_LOGS',
@@ -59,7 +71,9 @@ class AppConfig {
       print('Development Mode: $isDevelopment');
       print('Mock Mode: $enableMockMode');
       print('Base URL: $defaultBaseUrl');
-      print('Timeout: ${defaultTimeoutSeconds}s');
+      print('Default Timeout: ${defaultTimeoutSeconds}s');
+      print('Profile Timeout: ${profileTimeoutSeconds}s');
+      print('Connection Timeout: ${connectionTimeoutSeconds}s');
       print('Max Retries: $maxRetries');
       print('Retry Interval: ${retryIntervalSeconds}s');
       print('Ping Interval: ${pingIntervalSeconds}s');

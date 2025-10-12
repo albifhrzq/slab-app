@@ -317,8 +317,9 @@ class ConnectionManager extends ChangeNotifier {
 
   // Method ini hanya untuk maintenance koneksi yang sudah ada
   void resetAndRetry() {
-    if (_isInitialConnection)
+    if (_isInitialConnection) {
       return; // Jangan interfere dengan initial connection
+    }
 
     _retryCount = 0;
     _connectionStatus = 'Reconnecting...';

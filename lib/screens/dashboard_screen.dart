@@ -630,71 +630,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                     const SizedBox(height: 16),
 
-                    // Profile management buttons
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        ElevatedButton.icon(
-                          icon: const Icon(Icons.lightbulb_outline),
-                          label: const Text('Edit Profiles'),
-                          onPressed:
-                              () => Navigator.pushNamed(context, '/profiles'),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 16),
-
                     // Connection status dan retry button
                     Consumer<ConnectionManager>(
                       builder: (context, connectionManager, child) {
-                        if (connectionManager.isConnected) {
-                          // Jika terhubung, tampilkan tombol refresh biasa
-                          return ElevatedButton.icon(
-                            icon: const Icon(Icons.refresh),
-                            label: const Text('Refresh Data'),
-                            onPressed: () async {
-                              // Simpan pengaturan manual saat ini sebelum refresh
-                              if (_isManualMode) {
-                                await ManualSettingsCache.saveManualProfile(
-                                  _currentProfile,
-                                );
-                              }
-
-                              // Sekarang muat ulang data
-                              await _loadCurrentState();
-
-                              // Jika dalam mode manual, pastikan pengaturan yang tersimpan digunakan
-                              if (_isManualMode) {
-                                final cachedProfile =
-                                    await ManualSettingsCache.getManualProfile();
-                                if (cachedProfile != null) {
-                                  setState(() {
-                                    _currentProfile = cachedProfile;
-                                  });
-
-                                  // Terapkan pengaturan ke perangkat
-                                  final apiService =
-                                      Provider.of<AquariumApiService>(
-                                        context,
-                                        listen: false,
-                                      );
-                                  await apiService.setManualLedValues(
-                                    _currentProfile.toJson(),
-                                  );
-                                }
-                              }
-
-                              // Tampilkan notifikasi refresh berhasil
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Data refreshed successfully'),
-                                  backgroundColor: Colors.green,
-                                ),
-                              );
-                            },
-                          );
-                        } else {
+                        if (!connectionManager.isConnected) {
                           // Jika tidak terhubung, tampilkan tombol retry connection
                           return Column(
                             children: [
@@ -760,6 +699,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ],
                           );
                         }
+                        // Jika terhubung, tidak tampilkan apapun
+                        return const SizedBox.shrink();
                       },
                     ),
 
@@ -793,7 +734,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               const SizedBox(height: 12),
                               Row(
                                 children: [
-                                  Icon(
+                                  const Icon(
                                     AppConfig.enableMockMode
                                         ? Icons.cloud_off
                                         : Icons.wifi,

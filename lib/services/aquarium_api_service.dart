@@ -23,51 +23,63 @@ class AquariumApiService {
     'white': 200,
   };
 
-  static Map<String, Map<String, dynamic>> _mockProfiles = {
-    'morning': {
-      'royalBlue': 50,
-      'blue': 80,
-      'uv': 20,
-      'violet': 30,
-      'red': 10,
-      'green': 15,
-      'white': 100,
-    },
-    'midday': {
-      'royalBlue': 200,
-      'blue': 180,
-      'uv': 100,
-      'violet': 120,
-      'red': 80,
-      'green': 100,
-      'white': 255,
-    },
-    'evening': {
-      'royalBlue': 150,
-      'blue': 120,
-      'uv': 60,
-      'violet': 80,
-      'red': 40,
-      'green': 50,
-      'white': 180,
-    },
-    'night': {
-      'royalBlue': 20,
-      'blue': 30,
-      'uv': 0,
-      'violet': 10,
-      'red': 0,
-      'green': 0,
-      'white': 20,
-    },
-  };
-
-  static Map<String, dynamic> _mockTimeRanges = {
-    'morning': {'start': '06:00', 'end': '10:00'},
-    'midday': {'start': '10:00', 'end': '16:00'},
-    'evening': {'start': '16:00', 'end': '22:00'},
-    'night': {'start': '22:00', 'end': '06:00'},
-  };
+  // Mock hourly schedule (24 hours, 0-23)
+  static List<Map<String, dynamic>> _mockHourlySchedule = List.generate(24, (
+    hour,
+  ) {
+    // Create different intensities based on time of day
+    if (hour >= 0 && hour < 6) {
+      // Night (00:00-05:59) - dim blue
+      return {
+        'hour': hour,
+        'royalBlue': 20,
+        'blue': 30,
+        'uv': 0,
+        'violet': 10,
+        'red': 0,
+        'green': 0,
+        'white': 20,
+      };
+    } else if (hour >= 6 && hour < 12) {
+      // Morning (06:00-11:59) - gradually increasing
+      final factor = (hour - 6) / 6.0;
+      return {
+        'hour': hour,
+        'royalBlue': (50 + 150 * factor).round(),
+        'blue': (80 + 120 * factor).round(),
+        'uv': (20 + 80 * factor).round(),
+        'violet': (30 + 70 * factor).round(),
+        'red': (10 + 90 * factor).round(),
+        'green': (15 + 85 * factor).round(),
+        'white': (100 + 155 * factor).round(),
+      };
+    } else if (hour >= 12 && hour < 18) {
+      // Midday (12:00-17:59) - full intensity
+      return {
+        'hour': hour,
+        'royalBlue': 200,
+        'blue': 180,
+        'uv': 100,
+        'violet': 120,
+        'red': 80,
+        'green': 100,
+        'white': 255,
+      };
+    } else {
+      // Evening (18:00-23:59) - gradually decreasing
+      final factor = 1.0 - ((hour - 18) / 6.0);
+      return {
+        'hour': hour,
+        'royalBlue': (20 + 130 * factor).round(),
+        'blue': (30 + 90 * factor).round(),
+        'uv': (0 + 60 * factor).round(),
+        'violet': (10 + 70 * factor).round(),
+        'red': (0 + 40 * factor).round(),
+        'green': (0 + 50 * factor).round(),
+        'white': (20 + 160 * factor).round(),
+      };
+    }
+  });
 
   AquariumApiService({required this.baseUrl});
 
@@ -76,7 +88,7 @@ class AquariumApiService {
     if (_mockMode) {
       developer.log('Mock: Getting current profile', name: 'mock');
       await Future.delayed(
-        Duration(milliseconds: AppConfig.mockDelayMs),
+        const Duration(milliseconds: AppConfig.mockDelayMs),
       ); // Simulate network delay
       return _mockCurrentProfile;
     }
@@ -89,77 +101,281 @@ class AquariumApiService {
     }
   }
 
-  // Get profile by type
-  Future<Map<String, dynamic>> getProfile(String type) async {
-    if (_mockMode) {
-      developer.log('Mock: Getting profile type: $type', name: 'mock');
-      await Future.delayed(Duration(milliseconds: AppConfig.mockDelayMs ~/ 2));
-      return _mockProfiles[type] ?? _mockProfiles['morning']!;
-    }
+  // ========== HOURLY SCHEDULE API METHODS ==========
 
-    final response = await client.get(
-      Uri.parse('$baseUrl/api/profile?type=$type'),
-    );
-    if (response.statusCode == 200) {
-      return json.decode(response.body);
-    } else {
-      throw Exception('Failed to load profile type: $type');
+  // Helper: Get hour ranges for each time period
+  static List<int> getHoursForPeriod(String period) {
+    switch (period) {
+      case 'morning':
+        return [6, 7, 8, 9, 10, 11];
+      case 'midday':
+        return [12, 13, 14, 15, 16, 17];
+      case 'evening':
+        return [18, 19, 20, 21, 22, 23];
+      case 'night':
+        return [0, 1, 2, 3, 4, 5];
+      default:
+        return [];
     }
   }
 
-  // Set profile
-  Future<bool> setProfile(String type, Map<String, dynamic> profile) async {
+  // Helper: Get hours for all periods
+  static Map<String, List<int>> getAllPeriodHours() {
+    return {
+      'morning': getHoursForPeriod('morning'),
+      'midday': getHoursForPeriod('midday'),
+      'evening': getHoursForPeriod('evening'),
+      'night': getHoursForPeriod('night'),
+    };
+  }
+
+  // Get complete 24-hour schedule
+  Future<List<Map<String, dynamic>>> getHourlySchedule() async {
     if (_mockMode) {
-      developer.log('Mock: Setting profile $type: $profile', name: 'mock');
-      await Future.delayed(Duration(milliseconds: AppConfig.mockDelayMs ~/ 2));
-      _mockProfiles[type] = Map<String, dynamic>.from(profile);
-      _mockCurrentProfile = Map<String, dynamic>.from(profile);
+      developer.log('Mock: Getting hourly schedule (24 hours)', name: 'mock');
+      await Future.delayed(const Duration(milliseconds: AppConfig.mockDelayMs));
+      return List<Map<String, dynamic>>.from(_mockHourlySchedule);
+    }
+
+    try {
+      developer.log(
+        'Getting hourly schedule: $baseUrl/api/schedule/hourly',
+        name: 'network',
+      );
+
+      const timeoutDuration = Duration(
+        seconds: AppConfig.profileTimeoutSeconds,
+      );
+
+      final response = await client
+          .get(Uri.parse('$baseUrl/api/schedule/hourly'))
+          .timeout(timeoutDuration);
+
+      developer.log(
+        'Hourly schedule response: ${response.statusCode}',
+        name: 'network',
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['schedule'] != null) {
+          return List<Map<String, dynamic>>.from(
+            data['schedule'].map((item) => Map<String, dynamic>.from(item)),
+          );
+        }
+        throw Exception('Invalid response format: missing schedule array');
+      } else {
+        developer.log('HTTP Error: ${response.statusCode}', name: 'network');
+        throw Exception(
+          'Failed to load hourly schedule (${response.statusCode})',
+        );
+      }
+    } catch (e) {
+      developer.log(
+        'Get hourly schedule error: ${e.toString()}',
+        name: 'network',
+      );
+      if (e is TimeoutException) {
+        throw TimeoutException('Hourly schedule request timed out');
+      }
+      throw Exception('Failed to load hourly schedule: ${e.toString()}');
+    }
+  }
+
+  // Set complete 24-hour schedule
+  Future<bool> setHourlySchedule(List<Map<String, dynamic>> schedule) async {
+    if (_mockMode) {
+      developer.log('Mock: Setting hourly schedule (24 hours)', name: 'mock');
+      await Future.delayed(
+        const Duration(milliseconds: AppConfig.mockDelayMs ~/ 2),
+      );
+      _mockHourlySchedule = List<Map<String, dynamic>>.from(schedule);
       return true;
     }
 
-    final data = {'type': type, 'profile': profile};
+    try {
+      final data = {'schedule': schedule};
 
-    final response = await client.post(
-      Uri.parse('$baseUrl/api/profile'),
-      headers: {'Content-Type': 'application/json'},
-      body: json.encode(data),
-    );
+      developer.log(
+        'Setting hourly schedule: $baseUrl/api/schedule/hourly',
+        name: 'network',
+      );
 
-    return response.statusCode == 200;
+      final response = await client.post(
+        Uri.parse('$baseUrl/api/schedule/hourly'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode(data),
+      );
+
+      developer.log(
+        'Set hourly schedule response: ${response.statusCode}',
+        name: 'network',
+      );
+
+      return response.statusCode == 200;
+    } catch (e) {
+      developer.log(
+        'Set hourly schedule error: ${e.toString()}',
+        name: 'network',
+      );
+      return false;
+    }
   }
 
-  // Get time ranges
-  Future<Map<String, dynamic>> getTimeRanges() async {
-    if (_mockMode) {
-      developer.log('Mock: Getting time ranges', name: 'mock');
-      await Future.delayed(Duration(milliseconds: AppConfig.mockDelayMs ~/ 2));
-      return _mockTimeRanges;
+  // Get profile for a specific hour (0-23)
+  Future<Map<String, dynamic>> getHourProfile(int hour) async {
+    if (hour < 0 || hour > 23) {
+      throw ArgumentError('Hour must be between 0 and 23');
     }
 
-    final response = await client.get(Uri.parse('$baseUrl/api/timeranges'));
-    if (response.statusCode == 200) {
-      return json.decode(response.body);
-    } else {
-      throw Exception('Failed to load time ranges');
+    if (_mockMode) {
+      developer.log('Mock: Getting profile for hour $hour', name: 'mock');
+      await Future.delayed(
+        const Duration(milliseconds: AppConfig.mockDelayMs ~/ 2),
+      );
+      return _mockHourlySchedule[hour];
+    }
+
+    try {
+      developer.log(
+        'Getting hour profile: $baseUrl/api/schedule/hourly/$hour',
+        name: 'network',
+      );
+
+      const timeoutDuration = Duration(
+        seconds: AppConfig.profileTimeoutSeconds,
+      );
+
+      final response = await client
+          .get(Uri.parse('$baseUrl/api/schedule/hourly/$hour'))
+          .timeout(timeoutDuration);
+
+      developer.log(
+        'Hour profile response: ${response.statusCode}',
+        name: 'network',
+      );
+
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      } else {
+        developer.log('HTTP Error: ${response.statusCode}', name: 'network');
+        throw Exception('Failed to load hour profile (${response.statusCode})');
+      }
+    } catch (e) {
+      developer.log('Get hour profile error: ${e.toString()}', name: 'network');
+      if (e is TimeoutException) {
+        throw TimeoutException('Hour profile request timed out');
+      }
+      throw Exception('Failed to load hour profile: ${e.toString()}');
     }
   }
 
-  // Set time ranges
-  Future<bool> setTimeRanges(Map<String, dynamic> timeRanges) async {
+  // Update profile for a specific hour
+  Future<bool> setHourProfile(int hour, Map<String, dynamic> profile) async {
+    if (hour < 0 || hour > 23) {
+      throw ArgumentError('Hour must be between 0 and 23');
+    }
+
     if (_mockMode) {
-      developer.log('Mock: Setting time ranges: $timeRanges', name: 'mock');
-      await Future.delayed(const Duration(milliseconds: 100));
-      _mockTimeRanges.addAll(timeRanges);
+      developer.log(
+        'Mock: Setting profile for hour $hour: $profile',
+        name: 'mock',
+      );
+      await Future.delayed(
+        const Duration(milliseconds: AppConfig.mockDelayMs ~/ 2),
+      );
+      _mockHourlySchedule[hour] = Map<String, dynamic>.from(profile)
+        ..['hour'] = hour;
       return true;
     }
 
-    final response = await client.post(
-      Uri.parse('$baseUrl/api/timeranges'),
-      headers: {'Content-Type': 'application/json'},
-      body: json.encode(timeRanges),
+    try {
+      // To update a single hour, we need to get the full schedule,
+      // update the specific hour, and send it back
+      final currentSchedule = await getHourlySchedule();
+      currentSchedule[hour] = Map<String, dynamic>.from(profile)
+        ..['hour'] = hour;
+
+      return await setHourlySchedule(currentSchedule);
+    } catch (e) {
+      developer.log('Set hour profile error: ${e.toString()}', name: 'network');
+      return false;
+    }
+  }
+
+  // ========== PERIOD-BASED METHODS (UI Helper - Uses Hourly API) ==========
+
+  // Get all profiles for a specific period (e.g., 'morning', 'midday', etc.)
+  // Returns a list of hourly profiles within that period
+  Future<List<Map<String, dynamic>>> getPeriodProfiles(String period) async {
+    final hours = getHoursForPeriod(period);
+    if (hours.isEmpty) {
+      throw ArgumentError('Invalid period: $period');
+    }
+
+    final schedule = await getHourlySchedule();
+    return hours.map((hour) => schedule[hour]).toList();
+  }
+
+  // Get representative profile for a period (average or middle hour)
+  Future<Map<String, dynamic>> getPeriodRepresentative(String period) async {
+    final profiles = await getPeriodProfiles(period);
+    if (profiles.isEmpty) {
+      throw Exception('No profiles found for period: $period');
+    }
+
+    // Return the middle profile as representative
+    final middleIndex = profiles.length ~/ 2;
+    return profiles[middleIndex];
+  }
+
+  // Set all hours in a period to the same profile
+  Future<bool> setPeriodProfile(
+    String period,
+    Map<String, dynamic> profile,
+  ) async {
+    final hours = getHoursForPeriod(period);
+    if (hours.isEmpty) {
+      throw ArgumentError('Invalid period: $period');
+    }
+
+    developer.log(
+      'Setting profile for period $period (${hours.length} hours)',
+      name: 'network',
     );
 
-    return response.statusCode == 200;
+    try {
+      final currentSchedule = await getHourlySchedule();
+
+      // Update all hours in this period
+      for (final hour in hours) {
+        currentSchedule[hour] = Map<String, dynamic>.from(profile)
+          ..['hour'] = hour;
+      }
+
+      return await setHourlySchedule(currentSchedule);
+    } catch (e) {
+      developer.log(
+        'Set period profile error: ${e.toString()}',
+        name: 'network',
+      );
+      return false;
+    }
+  }
+
+  // Get all periods with their profiles (for batch loading)
+  Future<Map<String, List<Map<String, dynamic>>>> getAllPeriodProfiles() async {
+    final schedule = await getHourlySchedule();
+    final periods = getAllPeriodHours();
+
+    final result = <String, List<Map<String, dynamic>>>{};
+    for (final entry in periods.entries) {
+      final periodName = entry.key;
+      final hours = entry.value;
+      result[periodName] = hours.map((hour) => schedule[hour]).toList();
+    }
+
+    return result;
   }
 
   // Manual LED control
@@ -460,52 +676,60 @@ class AquariumApiService {
       'white': 200,
     };
 
-    _mockProfiles = {
-      'morning': {
-        'royalBlue': 50,
-        'blue': 80,
-        'uv': 20,
-        'violet': 30,
-        'red': 10,
-        'green': 15,
-        'white': 100,
-      },
-      'midday': {
-        'royalBlue': 200,
-        'blue': 180,
-        'uv': 100,
-        'violet': 120,
-        'red': 80,
-        'green': 100,
-        'white': 255,
-      },
-      'evening': {
-        'royalBlue': 150,
-        'blue': 120,
-        'uv': 60,
-        'violet': 80,
-        'red': 40,
-        'green': 50,
-        'white': 180,
-      },
-      'night': {
-        'royalBlue': 20,
-        'blue': 30,
-        'uv': 0,
-        'violet': 10,
-        'red': 0,
-        'green': 0,
-        'white': 20,
-      },
-    };
+    // Reset hourly schedule to defaults
+    _mockHourlySchedule = List.generate(24, (hour) {
+      if (hour >= 0 && hour < 6) {
+        return {
+          'hour': hour,
+          'royalBlue': 20,
+          'blue': 30,
+          'uv': 0,
+          'violet': 10,
+          'red': 0,
+          'green': 0,
+          'white': 20,
+        };
+      } else if (hour >= 6 && hour < 12) {
+        final factor = (hour - 6) / 6.0;
+        return {
+          'hour': hour,
+          'royalBlue': (50 + 150 * factor).round(),
+          'blue': (80 + 120 * factor).round(),
+          'uv': (20 + 80 * factor).round(),
+          'violet': (30 + 70 * factor).round(),
+          'red': (10 + 90 * factor).round(),
+          'green': (15 + 85 * factor).round(),
+          'white': (100 + 155 * factor).round(),
+        };
+      } else if (hour >= 12 && hour < 18) {
+        return {
+          'hour': hour,
+          'royalBlue': 200,
+          'blue': 180,
+          'uv': 100,
+          'violet': 120,
+          'red': 80,
+          'green': 100,
+          'white': 255,
+        };
+      } else {
+        final factor = 1.0 - ((hour - 18) / 6.0);
+        return {
+          'hour': hour,
+          'royalBlue': (20 + 130 * factor).round(),
+          'blue': (30 + 90 * factor).round(),
+          'uv': (0 + 60 * factor).round(),
+          'violet': (10 + 70 * factor).round(),
+          'red': (0 + 40 * factor).round(),
+          'green': (0 + 50 * factor).round(),
+          'white': (20 + 160 * factor).round(),
+        };
+      }
+    });
 
-    _mockTimeRanges = {
-      'morning': {'start': '06:00', 'end': '10:00'},
-      'midday': {'start': '10:00', 'end': '16:00'},
-      'evening': {'start': '16:00', 'end': '22:00'},
-      'night': {'start': '22:00', 'end': '06:00'},
-    };
-
-    developer.log('Mock data reset to defaults', name: 'mock');
+    developer.log(
+      'Mock data reset to defaults (hourly schedule)',
+      name: 'mock',
+    );
   }
 }
