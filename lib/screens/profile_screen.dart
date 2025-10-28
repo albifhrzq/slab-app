@@ -74,10 +74,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     setState(() => _isLoading = true);
 
     try {
-      // Step 1: Load from cache first for immediate UI
-      await _loadFromCache();
-
-      // Step 2: Check connection status
+      // Check connection status
       final connectionManager = Provider.of<ConnectionManager>(
         context,
         listen: false,
@@ -87,20 +84,12 @@ class _ProfileScreenState extends State<ProfileScreen>
         final connected = await connectionManager.initialConnect();
         if (!connected) {
           setState(() => _isLoading = false);
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Using cached profiles (device not connected)'),
-                duration: Duration(seconds: 2),
-                backgroundColor: Colors.orange,
-              ),
-            );
-          }
+          // Don't show snackbar, just stop - UI will show connection warning
           return;
         }
       }
 
-      // Step 3: Sync with API
+      // Load from API if connected
       await _syncWithApi();
     } catch (e) {
       if (mounted) {
@@ -111,36 +100,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     } finally {
       setState(() => _isLoading = false);
     }
-  }
-
-  Future<void> _loadFromCache() async {
-    final cachedSchedule = await ProfileCache.getHourlySchedule();
-    if (cachedSchedule != null && cachedSchedule.length == 24) {
-      setState(() {
-        _hourlySchedule = cachedSchedule;
-      });
-    } else {
-      // Create default schedule (all zeros)
-      setState(() {
-        _hourlySchedule = _createDefaultSchedule();
-      });
-    }
-  }
-
-  List<Map<String, dynamic>> _createDefaultSchedule() {
-    return List.generate(
-      24,
-      (hour) => {
-        'hour': hour,
-        'royalBlue': 0,
-        'blue': 0,
-        'uv': 0,
-        'violet': 0,
-        'red': 0,
-        'green': 0,
-        'white': 0,
-      },
-    );
   }
 
   Future<void> _syncWithApi() async {
@@ -218,82 +177,47 @@ class _ProfileScreenState extends State<ProfileScreen>
     try {
       final profile = _hourlySchedule[hour];
 
-      // Save to cache immediately
+      // Save to cache immediately for backup
       await ProfileCache.saveHourlySchedule(_hourlySchedule);
 
       developer.log('Auto-saving hour $hour to device', name: 'profile_screen');
 
-      // Check connection
-      final connectionManager = Provider.of<ConnectionManager>(
+      // Save to device (since we're always connected in this screen)
+      final apiService = Provider.of<AquariumApiService>(
         context,
         listen: false,
       );
 
-      if (connectionManager.isConnected) {
-        final apiService = Provider.of<AquariumApiService>(
-          context,
-          listen: false,
-        );
+      await apiService.setHourProfile(hour, profile);
 
-        // Save to device (single hour only)
-        await apiService.setHourProfile(hour, profile);
+      // Remove from pending
+      _pendingSaves.remove(hour);
 
-        // Remove from pending
-        _pendingSaves.remove(hour);
+      developer.log(
+        'Hour $hour auto-saved successfully',
+        name: 'profile_screen',
+      );
 
-        developer.log(
-          'Hour $hour auto-saved successfully',
-          name: 'profile_screen',
-        );
-
-        // Show subtle success indicator
-        if (mounted) {
-          ScaffoldMessenger.of(context).clearSnackBars();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.check_circle, color: Colors.white, size: 18),
-                  const SizedBox(width: 8),
-                  Text('${hour.toString().padLeft(2, '0')}:00 saved'),
-                ],
-              ),
-              duration: const Duration(seconds: 1),
-              backgroundColor: Colors.green[700],
-              behavior: SnackBarBehavior.floating,
-              margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      // Show subtle success indicator
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white, size: 18),
+                const SizedBox(width: 8),
+                Text('${hour.toString().padLeft(2, '0')}:00 saved'),
+              ],
             ),
-          );
-        }
-      } else {
-        developer.log(
-          'Device offline, hour $hour saved to cache only',
-          name: 'profile_screen',
+            duration: const Duration(seconds: 1),
+            backgroundColor: Colors.green[700],
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          ),
         );
-
-        // Keep in pending saves for retry when online
-        if (mounted) {
-          ScaffoldMessenger.of(context).clearSnackBars();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.cloud_off, color: Colors.white, size: 18),
-                  SizedBox(width: 8),
-                  Text('Saved locally (offline)'),
-                ],
-              ),
-              duration: const Duration(seconds: 2),
-              backgroundColor: Colors.orange[700],
-              behavior: SnackBarBehavior.floating,
-              margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            ),
-          );
-        }
       }
     } on TimeoutException {
       developer.log('Timeout saving hour $hour', name: 'profile_screen');
@@ -307,7 +231,7 @@ class _ProfileScreenState extends State<ProfileScreen>
               children: [
                 Icon(Icons.timer_off, color: Colors.white, size: 18),
                 SizedBox(width: 8),
-                Text('Save timeout, saved locally'),
+                Text('Save timeout, please try again'),
               ],
             ),
             duration: const Duration(seconds: 2),
@@ -817,7 +741,95 @@ class _ProfileScreenState extends State<ProfileScreen>
       ),
       body: Stack(
         children: [
-          _isLoading
+          // Check connection first - if not connected, show warning
+          !connectionManager.isConnected
+              ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.wifi_off,
+                        size: 80,
+                        color: Colors.orange[300],
+                      ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'Device Not Connected',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Please connect to the device first to edit profiles.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      // Connection status
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.orange),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.info_outline,
+                              color: Colors.orange,
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                connectionManager.connectionStatus,
+                                style: const TextStyle(
+                                  color: Colors.orange,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      // Retry button
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.wifi),
+                        label: const Text('Retry Connection'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.orange,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 32,
+                            vertical: 16,
+                          ),
+                        ),
+                        onPressed:
+                            connectionManager.isRetrying
+                                ? null
+                                : () async {
+                          final success =
+                              await connectionManager.manualRetry();
+                          if (success && mounted) {
+                            // Reload profiles after successful connection
+                            _loadProfiles();
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              )
+              : _isLoading
               ? const Center(child: CircularProgressIndicator())
               : TabBarView(
                 controller: _tabController,
