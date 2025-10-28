@@ -194,31 +194,79 @@ class AquariumApiService {
     }
 
     try {
-      final data = {'schedule': schedule};
+      // Ensure all hour entries are properly formatted
+      final formattedSchedule =
+          schedule.map((hour) {
+            return {
+              'hour': hour['hour'] ?? 0,
+              'royalBlue': hour['royalBlue'] ?? 0,
+              'blue': hour['blue'] ?? 0,
+              'uv': hour['uv'] ?? 0,
+              'violet': hour['violet'] ?? 0,
+              'red': hour['red'] ?? 0,
+              'green': hour['green'] ?? 0,
+              'white': hour['white'] ?? 0,
+            };
+          }).toList();
+
+      final data = {'schedule': formattedSchedule};
+      final jsonBody = json.encode(data);
 
       developer.log(
         'Setting hourly schedule: $baseUrl/api/schedule/hourly',
         name: 'network',
       );
 
-      final response = await client.post(
-        Uri.parse('$baseUrl/api/schedule/hourly'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode(data),
+      developer.log(
+        'Schedule size: ${schedule.length} hours, payload: ${jsonBody.length} bytes',
+        name: 'network',
       );
+
+      final response = await client
+          .post(
+            Uri.parse('$baseUrl/api/schedule/hourly'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonBody,
+          )
+          .timeout(
+            const Duration(seconds: AppConfig.saveScheduleTimeoutSeconds),
+            onTimeout: () {
+              developer.log(
+                'Set hourly schedule request timed out after ${AppConfig.saveScheduleTimeoutSeconds}s',
+                name: 'network',
+              );
+              throw TimeoutException(
+                'Device tidak merespons dalam ${AppConfig.saveScheduleTimeoutSeconds} detik',
+              );
+            },
+          );
 
       developer.log(
         'Set hourly schedule response: ${response.statusCode}',
         name: 'network',
       );
 
-      return response.statusCode == 200;
+      if (response.statusCode != 200) {
+        developer.log(
+          'Set hourly schedule failed with status ${response.statusCode}: ${response.body}',
+          name: 'network',
+        );
+        throw Exception('Device menolak data (HTTP ${response.statusCode})');
+      }
+
+      return true;
+    } on TimeoutException catch (e) {
+      developer.log(
+        'Set hourly schedule timeout: ${e.message}',
+        name: 'network',
+      );
+      rethrow;
     } catch (e) {
       developer.log(
         'Set hourly schedule error: ${e.toString()}',
         name: 'network',
       );
-      return false;
+      rethrow;
     }
   }
 
@@ -290,16 +338,58 @@ class AquariumApiService {
     }
 
     try {
-      // To update a single hour, we need to get the full schedule,
-      // update the specific hour, and send it back
-      final currentSchedule = await getHourlySchedule();
-      currentSchedule[hour] = Map<String, dynamic>.from(profile)
-        ..['hour'] = hour;
+      // Format the profile data (remove 'hour' key if present, backend adds it)
+      final profileData = {
+        'royalBlue': profile['royalBlue'] ?? 0,
+        'blue': profile['blue'] ?? 0,
+        'uv': profile['uv'] ?? 0,
+        'violet': profile['violet'] ?? 0,
+        'red': profile['red'] ?? 0,
+        'green': profile['green'] ?? 0,
+        'white': profile['white'] ?? 0,
+      };
 
-      return await setHourlySchedule(currentSchedule);
+      developer.log(
+        'Setting hour $hour profile: $baseUrl/api/schedule/hourly/$hour',
+        name: 'network',
+      );
+
+      final response = await client
+          .post(
+            Uri.parse('$baseUrl/api/schedule/hourly/$hour'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode(profileData),
+          )
+          .timeout(
+            const Duration(seconds: AppConfig.profileTimeoutSeconds),
+            onTimeout: () {
+              developer.log(
+                'Set hour profile request timed out',
+                name: 'network',
+              );
+              throw TimeoutException('Request timed out');
+            },
+          );
+
+      developer.log(
+        'Set hour profile response: ${response.statusCode}',
+        name: 'network',
+      );
+
+      if (response.statusCode != 200) {
+        developer.log(
+          'Set hour profile failed: ${response.body}',
+          name: 'network',
+        );
+      }
+
+      return response.statusCode == 200;
+    } on TimeoutException {
+      developer.log('Set hour profile timeout', name: 'network');
+      rethrow;
     } catch (e) {
       developer.log('Set hour profile error: ${e.toString()}', name: 'network');
-      return false;
+      rethrow;
     }
   }
 

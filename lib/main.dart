@@ -44,7 +44,7 @@ class MyApp extends StatelessWidget {
           useMaterial3: true,
           brightness: Brightness.dark,
         ),
-        themeMode: ThemeMode.system,
+        themeMode: ThemeMode.dark,
         initialRoute: '/',
         routes: {'/': (context) => const MainNavigationScreen()},
       ),

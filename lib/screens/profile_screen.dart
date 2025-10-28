@@ -27,6 +27,11 @@ class _ProfileScreenState extends State<ProfileScreen>
   // Track selected hour for each period
   final Map<String, int> _selectedHour = {};
 
+  // Auto-save debouncing
+  Timer? _autoSaveTimer;
+  final Map<int, bool> _pendingSaves = {}; // Track which hours need saving
+  bool _isSaving = false;
+
   bool _isPreviewing = false;
   Timer? _previewTimer;
   int _previewStep = 0;
@@ -186,67 +191,168 @@ class _ProfileScreenState extends State<ProfileScreen>
     return Profile.fromJson(data);
   }
 
-  // Update profile for a specific hour
+  // Update profile for a specific hour dengan auto-save
   void _updateProfileForHour(int hour, String colorKey, int newValue) {
     if (hour < 0 || hour >= _hourlySchedule.length) return;
 
     setState(() {
       _hourlySchedule[hour][colorKey] = newValue;
     });
+
+    // Mark this hour as pending save
+    _pendingSaves[hour] = true;
+
+    // Debounce: cancel previous timer and start new one
+    _autoSaveTimer?.cancel();
+    _autoSaveTimer = Timer(const Duration(milliseconds: 800), () {
+      _autoSaveHour(hour);
+    });
   }
 
-  Future<void> _savePeriodProfile(String type) async {
-    try {
-      setState(() => _isLoading = true);
+  // Auto-save a single hour to device and cache
+  Future<void> _autoSaveHour(int hour) async {
+    if (_isSaving || !_pendingSaves.containsKey(hour)) return;
 
+    setState(() => _isSaving = true);
+
+    try {
+      final profile = _hourlySchedule[hour];
+
+      // Save to cache immediately
+      await ProfileCache.saveHourlySchedule(_hourlySchedule);
+
+      developer.log('Auto-saving hour $hour to device', name: 'profile_screen');
+
+      // Check connection
       final connectionManager = Provider.of<ConnectionManager>(
         context,
         listen: false,
       );
-      final apiService = Provider.of<AquariumApiService>(
-        context,
-        listen: false,
-      );
 
-      // Always save to cache
-      await ProfileCache.saveHourlySchedule(_hourlySchedule);
-
-      // If connected, send to device
       if (connectionManager.isConnected) {
-        final success = await apiService.setHourlySchedule(_hourlySchedule);
+        final apiService = Provider.of<AquariumApiService>(
+          context,
+          listen: false,
+        );
 
-        if (success) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('$type period saved successfully to device'),
-                backgroundColor: Colors.green,
-              ),
-            );
-          }
-        } else {
-          throw Exception('Failed to save to device');
-        }
-      } else {
+        // Save to device (single hour only)
+        await apiService.setHourProfile(hour, profile);
+
+        // Remove from pending
+        _pendingSaves.remove(hour);
+
+        developer.log(
+          'Hour $hour auto-saved successfully',
+          name: 'profile_screen',
+        );
+
+        // Show subtle success indicator
         if (mounted) {
+          ScaffoldMessenger.of(context).clearSnackBars();
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                '$type period saved locally only (device not connected)',
+              content: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white, size: 18),
+                  const SizedBox(width: 8),
+                  Text('${hour.toString().padLeft(2, '0')}:00 saved'),
+                ],
               ),
-              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 1),
+              backgroundColor: Colors.green[700],
+              behavior: SnackBarBehavior.floating,
+              margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
+          );
+        }
+      } else {
+        developer.log(
+          'Device offline, hour $hour saved to cache only',
+          name: 'profile_screen',
+        );
+
+        // Keep in pending saves for retry when online
+        if (mounted) {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.cloud_off, color: Colors.white, size: 18),
+                  SizedBox(width: 8),
+                  Text('Saved locally (offline)'),
+                ],
+              ),
+              duration: const Duration(seconds: 2),
+              backgroundColor: Colors.orange[700],
+              behavior: SnackBarBehavior.floating,
+              margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             ),
           );
         }
       }
-    } catch (e) {
+    } on TimeoutException {
+      developer.log('Timeout saving hour $hour', name: 'profile_screen');
+
       if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error saving: ${e.toString()}')),
+          SnackBar(
+            content: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.timer_off, color: Colors.white, size: 18),
+                SizedBox(width: 8),
+                Text('Save timeout, saved locally'),
+              ],
+            ),
+            duration: const Duration(seconds: 2),
+            backgroundColor: Colors.deepOrange[700],
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          ),
+        );
+      }
+    } catch (e) {
+      developer.log(
+        'Error auto-saving hour $hour: ${e.toString()}',
+        name: 'profile_screen',
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline, color: Colors.white, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Save failed: ${e.toString().replaceAll('Exception: ', '')}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+            duration: const Duration(seconds: 3),
+            backgroundColor: Colors.red[700],
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          ),
         );
       }
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
     }
   }
 
@@ -674,6 +780,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   void dispose() {
     _tabController.dispose();
     _previewTimer?.cancel();
+    _autoSaveTimer?.cancel();
     super.dispose();
   }
 
@@ -791,17 +898,37 @@ class _ProfileScreenState extends State<ProfileScreen>
                             ),
                             const SizedBox(height: 12),
 
-                            // Save button
-                            ElevatedButton.icon(
-                              onPressed: () => _savePeriodProfile(type),
-                              icon: const Icon(Icons.save),
-                              label: Text('Save $type Period'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
+                            // Auto-save indicator
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.green.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: Colors.green.withOpacity(0.3),
                                 ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _isSaving ? Icons.sync : Icons.cloud_done,
+                                    color: Colors.green[700],
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      _isSaving
+                                          ? 'Menyimpan...'
+                                          : 'Perubahan tersimpan otomatis',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.green[700],
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],

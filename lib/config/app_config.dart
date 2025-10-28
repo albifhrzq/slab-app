@@ -29,6 +29,12 @@ class AppConfig {
     defaultValue: 3,
   );
 
+  // Longer timeout for saving complete schedule (24 hours = large payload)
+  static const int saveScheduleTimeoutSeconds = int.fromEnvironment(
+    'SAVE_TIMEOUT_SECONDS',
+    defaultValue: 10,
+  );
+
   // Quick timeout for connection checks
   static const int connectionTimeoutSeconds = int.fromEnvironment(
     'CONNECTION_TIMEOUT_SECONDS',
